@@ -38,6 +38,10 @@ Discuss what you need to develop this project. This includes background informat
 <div align="center">
 
 [//]: # (Replace with your collaborators)
-[Ian Tyler Applebaum](https://github.com/ApplebaumIan) • [Kyle Dragon Lee](https://github.com/leekd99)
+[William Sims](https://github.com/wSimsT)
+Kidus Adamte
+Billy Nguyen
+Andrew
+Saniyah Davis
 
 </div>
