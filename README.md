@@ -41,7 +41,7 @@ Discuss what you need to develop this project. This includes background informat
 [William Sims](https://github.com/wSimsT)
 Kidus Adamte
 Billy Nguyen
-Andrew
+[Andrew Kelley](https://github.com/andrewkelley-1)
 Saniyah Davis
 
 </div>
