@@ -42,6 +42,6 @@ Discuss what you need to develop this project. This includes background informat
 [Kidus Adamte](https://github.com/kidham3207)
 [Billy Nguyen](https://github.com/bnguye04)
 [Andrew Kelley](https://github.com/andrewkelley-1)
-Saniyah Davis
+[Saniyah Davis](https://github.com/Saniyah-Davis)
 
 </div>
