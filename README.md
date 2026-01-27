@@ -15,7 +15,7 @@ Section #, as well as any words that quickly give your peers insights into the a
 
 ## Project Abstract
 
-This document proposes a novel application of a text message (SMS or Email) read-out and hands-free call interacted between an Android Smartphone and an infotainment platform (headunit) in a car environment. When a phone receives an SMS or Email, the text message is transferred from the phone to the headunit through a Bluetooth connection. On the headunit, user can control which and when the received SMS or E-mail to be read out through the in-vehicle audio system. The user may press one button on the headunit to activate the hands-free feature to call back the SMS sender.
+This document proposes a novel application of a RAG Model applied in a work software context. It will support new team members by giving them tools and offer information that may speed up the process of adapting to a new team. For experienced members of the group, it can help build connection with the new members. For team leads, it will keep them up to date on the current stages of their work the team members are working on. 
 
 ## High Level Requirement
 
