@@ -40,7 +40,7 @@ Discuss what you need to develop this project. This includes background informat
 [//]: # (Replace with your collaborators)
 [William Sims](https://github.com/wSimsT)
 [Kidus Adamte](https://github.com/kidham3207)
-Billy Nguyen
+[Billy Nguyen](https://github.com/bnguye04)
 [Andrew Kelley](https://github.com/andrewkelley-1)
 Saniyah Davis
 
