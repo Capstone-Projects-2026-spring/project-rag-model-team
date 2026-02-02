@@ -8,6 +8,9 @@ sidebar_position: 1
 
 The project proposes an intelligent chatbot using RAG(Retrieval-Augmented Generation) that will help with streamlining the onboarding process for a new team member in the company, or help an already existing employee join a new project. Through the integration of the chatbot into platforms such as Slack, Discord, and Microsoft Teams, the RagOil Bot will act as an automated knowledge assistance tool for new team members to have access to the project-related information. The chatbot will use a two- tier retrieval approach, where it will first query the local project documentation for relevant data, and second, if it can’t find sufficient data, it will dynamically scale to search the internet for additional information that may be useful to provide a full range of support to new developers. So the RagOil Bot will provide centralized knowledge searching capabilities and automate many commonly asked questions, resulting in less time being spent by new developers before they can become ready to contribute to the development environment. 
 
+## Conceptual Design
+
+The frontend of the chatbot will be built using Node.js. Node.js will be used to create the UI of the chatbot, receive user input, call the API, and send responses back to the user. The backend of the chatbot will be built using GraphQL and OpenRouter API. OpenRouter will route the user’s prompt to an LLM and route it back to Node.js to respond to the user. GraphQL will be used to store data from the user’s queries on the server, allowing users to request information such as current projects or previously prompted tutorials. 
 
 ## Background and Refrences 
 
