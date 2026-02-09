@@ -164,4 +164,3 @@ As a manager, I want insight into team knowledge gaps so I can improve performan
 
 ### System Failure Handling
 - If analytics data is unavailable, the system logs the issue and notifies administrators.
-
