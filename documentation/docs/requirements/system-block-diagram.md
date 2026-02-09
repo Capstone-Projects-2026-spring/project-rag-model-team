@@ -3,7 +3,7 @@ sidebar_position: 2
 ---
 
 # System Block Diagram
-![System Block Diagram PNG](./FinalProjectRelationDiagram(1).png)
+![System Block Diagram PNG](./FinalProjectRelationDiagram.png)
 
 ## Description
 
