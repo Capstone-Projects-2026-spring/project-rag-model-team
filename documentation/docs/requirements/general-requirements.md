@@ -1,4 +1,6 @@
-## General Requirements
+---
+sidebar_position: 3
+---
 
 1. **Device Access**  
    Users must have access to a functional desktop, laptop, tablet, or smartphone capable of running modern web or mobile applications in order to access and use the system.
