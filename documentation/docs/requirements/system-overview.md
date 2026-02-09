@@ -6,16 +6,44 @@ sidebar_position: 1
 
 ## Project Abstract
 
-The project proposes an intelligent chatbot using RAG(Retrieval-Augmented Generation) that will help with streamlining the onboarding process for a new team member in the company, or help an already existing employee join a new project. Through the integration of the chatbot into platforms such as Slack, Discord, and Microsoft Teams, the RagOil Bot will act as an automated knowledge assistance tool for new team members to have access to the project-related information. The chatbot will use a two- tier retrieval approach, where it will first query the local project documentation for relevant data, and second, if it can’t find sufficient data, it will dynamically scale to search the internet for additional information that may be useful to provide a full range of support to new developers. So the RagOil Bot will provide centralized knowledge searching capabilities and automate many commonly asked questions, resulting in less time being spent by new developers before they can become ready to contribute to the development environment. 
+This project proposes the development of an intelligent chatbot called **Project Keystone** that uses Retrieval-Augmented Generation (RAG) to support employee onboarding and project transitions.
+
+Retrieval-Augmented Generation is a technique in which an AI system retrieves relevant information from existing documents before generating a response. This allows the chatbot to provide more accurate, up-to-date, and context-specific answers instead of relying only on pre-trained knowledge.
+
+The chatbot will assist new employees or team members joining a new project by providing quick access to project documentation, setup guides, and frequently asked questions. For example, a new developer may ask, “How do I set up the development environment?” and receive step-by-step instructions gathered from internal documentation.
+
+The system will retrieve information from approved project resources and, when necessary, supplement responses with publicly available technical references. By centralizing knowledge access, the chatbot aims to reduce the time required for onboarding and improve developer productivity.
+
+System effectiveness will be measured through metrics such as reduced onboarding time, decreased number of repetitive support questions, and improved user satisfaction.
 
 ## Conceptual Design
 
-The frontend of the chatbot will be built using Node.js. Node.js will be used to create the UI of the chatbot, receive user input, call the API, and send responses back to the user. The backend of the chatbot will be built using GraphQL and OpenRouter API. OpenRouter will route the user’s prompt to an LLM and route it back to Node.js to respond to the user. GraphQL will be used to store data from the user’s queries on the server, allowing users to request information such as current projects or previously prompted tutorials. 
+The system will consist of three main components: a user interface, a processing layer, and a knowledge retrieval system.
 
-## Background and Refrences 
+Users will interact with the chatbot through supported communication platforms such as Slack, Discord, or Microsoft Teams. The interface will accept user questions and display system responses in real time.
 
-The onboarding process for new team members in software development is usually slowed down by "knowledge silos," where important project information is scattered across different platforms like README files, wikis, and historical chat threads. Traditional manual onboarding typically requires substantial time from both the new hire and senior mentors, often taking between 8 to 11 hours of direct supervision per hire and resulting in a significant "time-to-productivity" lag according to an article by ITACIT. The RagOil Bot addresses these issues by implementing a Retrieval-Augmented Generation (RAG) architecture. 
-Commercial solutions like Stack Overflow, and Glean give AI-powered knowledge retrieval for organizational documentation. But, these products are usually platform specific or require enterprise-wide adoption.This chatbot is different by being platform-agnostic (deployable across multiple messaging apps), project-scoped (focused specifically on onboarding workflows rather than general knowledge management), and customizable (allowing teams to tailor the knowledge base and response patterns to their specific project needs).
+The processing layer will interpret user input, manage system logic, and coordinate communication between components. It will be responsible for generating responses based on retrieved information.
 
+The knowledge retrieval system will search approved internal documentation and external technical sources to locate relevant content. Retrieved information will be used to generate accurate and context-aware responses.
 
-##### iTacit (2025). "How AI Makes Employee Onboarding Faster: A Manager's Guide."
+User queries and system interactions may be stored to improve system performance, support analytics, and enhance future responses. All stored data will follow organizational privacy and security policies.
+
+## Background and References
+
+In many software organizations, important project information is distributed across multiple platforms such as internal wikis, documentation files, and chat histories. This often leads to knowledge silos, making it difficult for new employees to find relevant information efficiently.
+
+Traditional onboarding processes frequently require extensive involvement from senior team members, resulting in increased training costs and delayed productivity. According to iTacit (2025), manual onboarding can require several hours of direct supervision for each new hire.
+
+Existing commercial solutions such as Stack Overflow for Teams and Glean provide AI-powered knowledge retrieval but often require full organizational adoption or are limited to specific platforms.
+
+Project Keystone differs from these solutions by being:
+
+- **Platform-agnostic:** Operates across multiple messaging platforms  
+- **Project-scoped:** Focuses specifically on onboarding and project-related workflows  
+- **Customizable:** Allows teams to define which documents are used, adjust response behavior, and configure access permissions  
+
+These characteristics enable the system to better align with individual team needs while maintaining flexibility.
+
+### References
+
+iTacit (2025). *How AI Makes Employee Onboarding Faster: A Manager's Guide.*
