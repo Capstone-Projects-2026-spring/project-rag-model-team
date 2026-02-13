@@ -1,0 +1,28 @@
+{
+  "name": "project-rag-model-team",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "<div align=\"center\">",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node index.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Capstone-Projects-2026-spring/project-rag-model-team.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/Capstone-Projects-2026-spring/project-rag-model-team/issues"
+  },
+  "homepage": "https://github.com/Capstone-Projects-2026-spring/project-rag-model-team#readme",
+  "dependencies": {
+    "@openrouter/sdk": "^0.5.1",
+    "@slack/bolt": "^4.6.0",
+    "bolt": "^0.24.10",
+    "dotenv": "^17.2.4",
+    "slack": "^11.0.2"
+  }
+}
