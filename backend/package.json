@@ -1,0 +1,24 @@
+{
+  "name": "rag-bot-backend",
+  "version": "1.0.0",
+  "description": "Backend API for RAG bot user intake and personalization",
+  "main": "server-sqljs.js",
+  "scripts": {
+    "start": "node server-sqljs.js",
+    "dev": "nodemon server-sqljs.js",
+    "init-db": "node scripts/initDatabase.js",
+    "setup": "node scripts/start.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "sql.js": "^1.10.3",
+    "express-session": "^1.17.3",
+    "body-parser": "^1.20.2",
+    "dotenv": "^16.3.1",
+    "uuid": "^9.0.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  }
+}
