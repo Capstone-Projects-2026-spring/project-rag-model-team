@@ -1,27 +1,31 @@
 ---
 sidebar_position: 1
 ---
+# Component Descriptions
 
-**Purpose**
+#### Slack Bot Interface
+The primary user interface where employees interact with the chatbot. Users send messages in Slack channels or direct messages, and the bot responds with information retrieved from documentation.
 
-The Design Document - Part I Architecture describes the software architecture and how the requirements are mapped into the design. This document will be a combination of diagrams and text that describes what the diagrams are showing.
+#### Node.js Application
+Backend server that process requests.
 
-**Requirements**
+#### Bolt.js
+Handles all communication with the Slack platform
 
-In addition to the general requirements the Design Document - Part I Architecture will contain:
+#### GraphQL API
+Query language and API layer that provides flexible data access to frontend clients and internal services.
 
-A description the different components and their interfaces. For example: client, server, database.
+#### LangChain
+Framework that orchestrates the Retrieval-Augmented Generation pipeline for processing user queries and generating responses.
 
-For each component provide class diagrams showing the classes to be developed (or used) and their relationship.
+#### SQL Database 
+Relational database storing structured user data.
 
-Sequence diagrams showing the data flow for _all_ use cases. One sequence diagram corresponds to one use case and different use cases should have different corresponding sequence diagrams.
+#### NoSQL Database (MongoDB)
+Document database storing documentation uploaded by employees.
 
-Describe algorithms employed in your project, e.g. neural network paradigm, training and training data set, etc.
+#### GitHub
+Code repository for version control.
 
-If there is a database:
-
-Entity-relation diagram.
-
-Table design.
-
-A check list for architecture design is attached here [architecture\_design\_checklist.pdf](https://templeu.instructure.com/courses/106563/files/16928870/download?wrap=1 "architecture_design_checklist.pdf")  and should be used as a guidance.
+#### Docusaurus
+Static site generator hosting all project documentation.

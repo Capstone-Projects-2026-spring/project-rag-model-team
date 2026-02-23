@@ -1,0 +1,17 @@
+{
+  "id": "project-alpha",
+  "name": "Project Alpha",
+  "description": "A customer-facing web application for managing user accounts and subscriptions.",
+  "tech_stack": ["Node.js", "React", "PostgreSQL", "Docker"],
+  "repository": "https://github.com/company/project-alpha",
+  "setup_instructions": "1. Clone the repository\n2. Run `npm install`\n3. Copy .env.example to .env\n4. Run `docker-compose up -d` for database\n5. Run `npm run dev` to start development server",
+  "key_contacts": {
+    "tech_lead": "Sarah Johnson",
+    "product_owner": "Mike Chen"
+  },
+  "documentation_links": [
+    "https://wiki.company.com/project-alpha",
+    "https://github.com/company/project-alpha/blob/main/README.md"
+  ],
+  "onboarding_notes": "New developers should start with the Getting Started guide in the wiki. Make sure to request access to the staging environment within your first week."
+}
