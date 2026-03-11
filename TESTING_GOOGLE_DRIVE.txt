@@ -1,0 +1,221 @@
+# Testing Google Drive Integration
+
+This document explains how to test the Google Drive authentication flow with your Slack bot.
+
+## Prerequisites
+
+- Slack bot running locally or deployed
+- Google OAuth credentials configured in `.env`
+- Express server running on port 3001
+- Slack workspace with the bot added
+
+## Testing Scenarios
+
+### Scenario 1: Testing OAuth Flow Locally
+
+#### Setup (Local Testing with ngrok)
+
+If testing locally, expose your server with ngrok:
+
+```bash
+# In another terminal
+ngrok http 3001
+```
+
+This gives you a public URL like `https://abcd1234.ngrok.io`
+
+Update `.env`:
+```
+GOOGLE_REDIRECT_URI=https://abcd1234.ngrok.io/oauth2callback
+SERVER_URL=https://abcd1234.ngrok.io
+```
+
+#### Test Steps
+
+1. **Start the bot:**
+   ```bash
+   npm start
+   ```
+
+   You should see:
+   ```
+   🌐 Express server is running on http://localhost:3001
+   ⚡️ Slack bot is running in socket mode!
+   ```
+
+2. **In Slack, run the command:**
+   ```
+   /connect-drive
+   ```
+
+3. **Expected behavior:**
+   - A message appears with a "Connect Google Drive" button
+   - Clicking the button opens Google authentication page
+   - After authorizing, you're redirected to a success page
+   - Message says "Google Drive connected successfully!"
+
+4. **Verify token storage:**
+   ```bash
+   # Check if tokens.json was created
+   cat google_api/tokens.json
+   ```
+
+   You should see:
+   ```json
+   {
+     "U123456789": {
+       "access_token": "...",
+       "refresh_token": "...",
+       ...
+     }
+   }
+   ```
+
+### Scenario 2: Testing File Listing
+
+1. **After connecting, run:**
+   ```
+   /drive-files
+   ```
+
+2. **Expected response:**
+   - "Found X file(s)" with a list of your JSON files from Google Drive
+   - Each file shows name and link to view on Drive
+
+3. **If authentication fails:**
+   - Error message: "❌ Please connect your Google Drive first using `/connect-drive`"
+   - Indicates tokens weren't saved properly
+
+### Scenario 3: Testing Disconnect
+
+1. **Run the command:**
+   ```
+   /disconnect-drive
+   ```
+
+2. **Expected response:**
+   - "✓ Google Drive disconnected successfully."
+
+3. **Verify token removal:**
+   ```bash
+   cat google_api/tokens.json
+   ```
+
+   The user ID should no longer appear in the file.
+
+### Scenario 4: Test Error Handling
+
+**Invalid Google Credentials:**
+- Delete or corrupt GOOGLE_CLIENT_ID in .env
+- Run `/connect-drive`
+- Should show error page with error details
+
+**Expired Token:**
+- Wait for token to expire (or manually edit tokens.json)
+- Run `/drive-files`
+- Ask user to re-authenticate with `/connect-drive`
+
+## Debugging Tips
+
+### View Express Server Logs
+
+```bash
+# Enable debug logging
+DEBUG=* npm start
+```
+
+### Check OAuth Redirect
+
+1. After clicking "Connect Google Drive", you're redirected to:
+   ```
+   https://accounts.google.com/o/oauth2/v2/auth?...
+   ```
+
+2. The URL parameters show:
+   - `client_id`: Your Google Client ID
+   - `redirect_uri`: Should match GOOGLE_REDIRECT_URI
+   - `scope`: Drive permissions
+   - `state`: Your Slack User ID
+
+### Verify Token Structure
+
+Check the tokens.json file:
+
+```bash
+# Pretty print the tokens
+node -e "console.log(JSON.stringify(require('./google_api/tokens.json'), null, 2))"
+```
+
+Required fields:
+- `access_token`: Used to authorize API calls
+- `refresh_token`: Used to get new access tokens
+- `expiry_date`: When token expires
+
+### Common Issues
+
+**Button URL is incorrect:**
+- Check that `generateAuthUrl()` returns proper format
+- Verify `GOOGLE_REDIRECT_URI` is set in .env
+- Ensure ngrok URL is updated if using tunnel
+
+**Redirect page shows error:**
+- Check browser developer console for error details
+- Verify redirect_uri in Google Cloud Console matches exactly
+- Ensure GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are correct
+
+**Files not showing after authentication:**
+- Verify tokens.json has the user's ID
+- Check that user has JSON files in their Google Drive
+- The bot only searches for files with mime type `application/json`
+
+## Performance Testing
+
+### Load Testing OAuth Callback
+
+```bash
+# Use curl to simulate multiple callbacks
+for i in {1..10}; do
+  curl "http://localhost:3001/oauth2callback?code=test_code_$i&state=test_user_$i"
+done
+```
+
+### Check Token Storage Performance
+
+```bash
+# Monitor file size as tokens accumulate
+watch -n 1 'ls -lh google_api/tokens.json'
+```
+
+For production, implement database storage instead of JSON file.
+
+## Integration Testing Checklist
+
+- [ ] OAuth URL generation works
+- [ ] Google redirects back to callback URL
+- [ ] Tokens are saved correctly
+- [ ] Tokens are not exposed in logs
+- [ ] File listing works with valid tokens
+- [ ] Error message shown when not authenticated
+- [ ] Disconnect removes tokens
+- [ ] Multiple users can authenticate separately
+- [ ] Token refresh works on expiry
+- [ ] HTML response pages render correctly
+
+## Logs to Look For
+
+**Successful flow:**
+```
+🌐 Express server is running on http://localhost:3001
+⚡️ Slack bot is running in socket mode!
+[Slack] /connect-drive command received
+[OAuth] Generated auth URL for user U123456789
+[OAuth] Received callback with code
+[OAuth] Tokens saved for user U123456789
+```
+
+**Error flow:**
+```
+Error saving tokens: ...
+Error retrieving from Google Drive: User not authenticated
+Error listing files: ENOENT tokens.json
+```

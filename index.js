@@ -1,14 +1,27 @@
 import {App} from '@slack/bolt';
 import dotenv from 'dotenv';
-import { retrieveDocument, listAllProjects, formatDocumentForSlack, searchDocuments } from './document-retriever.js';
+import express from 'express';
+import { retrieveDocument, listAllProjects, formatDocumentForSlack, searchDocuments, retrieveDocumentFromDrive } from './document-retriever.js';
+import routes from './google_api/routes.js';
+import slackHandlers from './google_api/slack.js';
 
 dotenv.config();
+
+const expressApp = express();
+const PORT = process.env.PORT || 3001;
 
 const app = new App({
   token: process.env.SLACK_BOT_TOKEN,
   socketMode: true,
   appToken: process.env.SLACK_APP_TOKEN,
 });
+
+// Middleware
+expressApp.use(express.json());
+
+// Setup routes
+routes(expressApp);
+slackHandlers(app);
 
 const result = await app.client.conversations.list({
   token: process.env.SLACK_BOT_TOKEN
@@ -102,14 +115,21 @@ app.message(async ({ message, say }) => {
 });
 
 (async () => {
-    try {
+  try {
     await app.client.chat.postMessage({
       channel: welcomeChannelId,
       text: "Hello! I just started up!"
     });
-    } catch (error) {
-        console.error("Error sending startup message:", error);
-    }
-  await app.start(3000);
-  console.log("⚡️ Slack bot is running!");
+  } catch (error) {
+    console.error("Error sending startup message:", error);
+  }
+  
+  // Start Express server for OAuth callbacks
+  expressApp.listen(PORT, () => {
+    console.log(`🌐 Express server is running on http://localhost:${PORT}`);
+  });
+
+  // Start Slack bolt app
+  await app.start();
+  console.log("⚡️ Slack bot is running in socket mode!");
 })();
