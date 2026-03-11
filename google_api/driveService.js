@@ -1,43 +1,72 @@
 import { google } from "googleapis";
-import * as db from "./db.js";
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
-export async function getDriveClient(slackUserId) {
-  const tokens = db.getTokens(slackUserId);
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-  if (!tokens) {
-    throw new Error("User not authenticated with Google Drive");
+// Load service account credentials
+const SERVICE_ACCOUNT_KEY_PATH = process.env.GOOGLE_SERVICE_ACCOUNT_KEY_PATH || path.join(__dirname, '..', 'service-account-key.json');
+
+let auth;
+let isInitialized = false;
+
+try {
+  if (fs.existsSync(SERVICE_ACCOUNT_KEY_PATH)) {
+    const keyFile = JSON.parse(fs.readFileSync(SERVICE_ACCOUNT_KEY_PATH, 'utf8'));
+    auth = new google.auth.GoogleAuth({
+      credentials: keyFile,
+      scopes: ['https://www.googleapis.com/auth/drive.readonly']
+    });
+    isInitialized = true;
+    console.log('✅ Service account loaded successfully');
+  } else {
+    console.warn('⚠️ Service account key file not found at:', SERVICE_ACCOUNT_KEY_PATH);
   }
+} catch (error) {
+  console.error('❌ Error loading service account:', error.message);
+}
 
-  const auth = new google.auth.OAuth2(
-    process.env.GOOGLE_CLIENT_ID,
-    process.env.GOOGLE_CLIENT_SECRET,
-    process.env.GOOGLE_REDIRECT_URI || "http://localhost:3001/oauth2callback"
-  );
-  auth.setCredentials(tokens);
+export async function getDriveClient() {
+  if (!auth || !isInitialized) {
+    throw new Error("Service account not configured. Please add service-account-key.json");
+  }
 
   return google.drive({ version: "v3", auth });
 }
 
-export async function listFiles(slackUserId, pageSize = 10) {
+export async function isConnected() {
+  return isInitialized;
+}
+
+export async function listFiles(pageSize = 50) {
   try {
-    const drive = await getDriveClient(slackUserId);
+    const drive = await getDriveClient();
+
+    let query = "mimeType='application/json' and trashed=false";
+    const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID;
+
+    if (folderId) {
+      query += ` and '${folderId}' in parents`;
+    }
 
     const res = await drive.files.list({
       pageSize: pageSize,
-      fields: "files(id, name, mimeType, webViewLink)",
-      q: "mimeType='application/json' and trashed=false"
+      fields: "files(id, name, mimeType, webViewLink, modifiedTime, size)",
+      q: query,
+      orderBy: "modifiedTime desc"
     });
 
     return res.data.files || [];
   } catch (error) {
-    console.error("Error listing files:", error);
+    console.error("Error listing files:", error.message);
     throw error;
   }
 }
 
-export async function getFile(slackUserId, fileId) {
+export async function getFile(fileId) {
   try {
-    const drive = await getDriveClient(slackUserId);
+    const drive = await getDriveClient();
 
     const file = await drive.files.get(
       {
@@ -49,24 +78,48 @@ export async function getFile(slackUserId, fileId) {
 
     return file.data;
   } catch (error) {
-    console.error("Error getting file:", error);
+    console.error("Error getting file:", error.message);
     throw error;
   }
 }
 
-export async function searchFiles(slackUserId, query) {
+export async function searchFiles(query, pageSize = 20) {
   try {
-    const drive = await getDriveClient(slackUserId);
+    const drive = await getDriveClient();
+
+    let searchQuery = `name contains '${query}' and mimeType='application/json' and trashed=false`;
+    const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID;
+
+    if (folderId) {
+      searchQuery += ` and '${folderId}' in parents`;
+    }
 
     const res = await drive.files.list({
-      pageSize: 10,
-      fields: "files(id, name, mimeType, webViewLink)",
-      q: `name contains '${query}' and mimeType='application/json' and trashed=false`
+      pageSize: pageSize,
+      fields: "files(id, name, mimeType, webViewLink, modifiedTime)",
+      q: searchQuery,
+      orderBy: "modifiedTime desc"
     });
 
     return res.data.files || [];
   } catch (error) {
-    console.error("Error searching files:", error);
+    console.error("Error searching files:", error.message);
+    throw error;
+  }
+}
+
+export async function getFileMetadata(fileId) {
+  try {
+    const drive = await getDriveClient();
+
+    const res = await drive.files.get({
+      fileId: fileId,
+      fields: "id, name, mimeType, webViewLink, modifiedTime, size, owners"
+    });
+
+    return res.data;
+  } catch (error) {
+    console.error("Error getting file metadata:", error.message);
     throw error;
   }
 }

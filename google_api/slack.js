@@ -1,97 +1,158 @@
-import { generateAuthUrl } from "./googleAuth.js";
 import * as driveService from "./driveService.js";
-import * as db from "./db.js";
 
 export default function (app) {
-  // Command to connect Google Drive
-  app.command("/connect-drive", async ({ ack, body, respond, client }) => {
+  // Command to check Google Drive connection status
+  app.command("/drive-status", async ({ ack, respond }) => {
     await ack();
 
-    const slackUserId = body.user_id;
-    const authUrl = generateAuthUrl(slackUserId);
-    const redirectUrl = `${process.env.SERVER_URL || "http://localhost:3001"}${authUrl}`;
-
     try {
+      const isConnected = await driveService.isConnected();
+
+      if (!isConnected) {
+        await respond({
+          text: "❌ *Google Drive Status: Not Connected*",
+          blocks: [
+            {
+              type: "section",
+              text: {
+                type: "mrkdwn",
+                text: "Google Drive service account is not configured. Please ensure `service-account-key.json` is in the project root directory."
+              }
+            }
+          ]
+        });
+        return;
+      }
+
+      const files = await driveService.listFiles(1);
       await respond({
-        text: "🔐 *Connect Your Google Drive*",
+        text: "✅ *Google Drive Status: Connected*",
         blocks: [
           {
             type: "section",
             text: {
               type: "mrkdwn",
-              text: "Click the button below to authorize access to your Google Drive. This allows me to fetch your project documentation from Drive."
+              text: "✅ Service account is properly configured\n✅ Can access Google Drive files\n\nYou can now use `/drive-files` to list your Drive files."
             }
-          },
-          {
-            type: "actions",
-            elements: [
-              {
-                type: "button",
-                text: {
-                  type: "plain_text",
-                  text: "Connect Google Drive",
-                  emoji: true
-                },
-                url: redirectUrl,
-                action_id: "connect_google_drive"
-              }
-            ]
           }
         ]
       });
     } catch (error) {
-      await respond(`Error: ${error.message}`);
+      await respond({
+        text: "❌ *Google Drive Status: Error*",
+        blocks: [
+          {
+            type: "section",
+            text: {
+              type: "mrkdwn",
+              text: `Error connecting to Drive:\n\`\`\`${error.message}\`\`\``
+            }
+          }
+        ]
+      });
     }
   });
 
   // Command to list Google Drive files
-  app.command("/drive-files", async ({ ack, body, respond }) => {
+  app.command("/drive-files", async ({ ack, respond }) => {
     await ack();
 
-    const slackUserId = body.user_id;
-
     try {
-      const files = await driveService.listFiles(slackUserId);
-
-      if (files.length === 0) {
-        await respond("No JSON files found in your Google Drive.");
+      const isConnected = await driveService.isConnected();
+      if (!isConnected) {
+        await respond("❌ Google Drive not connected. Use `/drive-status` for details.");
         return;
       }
 
-      const fileList = files.map(f => `• *${f.name}* - <${f.webViewLink}|View on Drive>`).join('\n');
+      const files = await driveService.listFiles(20);
+
+      if (files.length === 0) {
+        await respond("📁 No JSON files found in your Google Drive.");
+        return;
+      }
+
+      const fileList = files
+        .map((f, i) => `${i + 1}. *${f.name}* - <${f.webViewLink}|View>`)
+        .join('\n');
 
       await respond({
-        text: "📁 *Your Google Drive Files*",
+        text: `📁 Found ${files.length} file(s)`,
         blocks: [
           {
             type: "section",
             text: {
               type: "mrkdwn",
-              text: `Found ${files.length} file(s):\n\n${fileList}`
+              text: `Found ${files.length} file(s) in Google Drive:\n\n${fileList}`
             }
           }
         ]
       });
     } catch (error) {
-      if (error.message.includes("not authenticated")) {
-        await respond("❌ Please connect your Google Drive first using `/connect-drive`");
-      } else {
-        await respond(`Error: ${error.message}`);
-      }
+      await respond(`❌ Error: ${error.message}`);
     }
   });
 
-  // Command to disconnect Google Drive
-  app.command("/disconnect-drive", async ({ ack, body, respond }) => {
+  // Command to search Drive files
+  app.command("/drive-search", async ({ ack, body, respond }) => {
     await ack();
 
-    const slackUserId = body.user_id;
+    const query = body.text.trim();
+
+    if (!query) {
+      await respond("Please provide a search term: `/drive-search project-name`");
+      return;
+    }
 
     try {
-      db.removeTokens(slackUserId);
-      await respond("✓ Google Drive disconnected successfully.");
+      const isConnected = await driveService.isConnected();
+      if (!isConnected) {
+        await respond("❌ Google Drive not connected.");
+        return;
+      }
+
+      const files = await driveService.searchFiles(query);
+
+      if (files.length === 0) {
+        await respond(`🔍 No files found matching: "${query}"`);
+        return;
+      }
+
+      const fileList = files
+        .map((f, i) => `${i + 1}. *${f.name}* - <${f.webViewLink}|View>`)
+        .join('\n');
+
+      await respond({
+        text: `🔍 Found ${files.length} result(s)`,
+        blocks: [
+          {
+            type: "section",
+            text: {
+              type: "mrkdwn",
+              text: `Search results for "${query}":\n\n${fileList}`
+            }
+          }
+        ]
+      });
     } catch (error) {
-      await respond(`Error: ${error.message}`);
+      await respond(`❌ Search error: ${error.message}`);
     }
+  });
+
+  // Command to show help for Drive commands
+  app.command("/drive-help", async ({ ack, respond }) => {
+    await ack();
+
+    await respond({
+      text: "📚 Google Drive Commands",
+      blocks: [
+        {
+          type: "section",
+          text: {
+            type: "mrkdwn",
+            text: "*Available Google Drive Commands:*\n\n`/drive-status` - Check if Drive is connected\n`/drive-files` - List all JSON files\n`/drive-search <term>` - Search for a file\n`/drive-help` - Show this help message"
+          }
+        }
+      ]
+    });
   });
 }
