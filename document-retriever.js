@@ -7,6 +7,36 @@ const __dirname = path.dirname(__filename);
 
 const DOCS_DIR = path.join(__dirname, 'sample-docs');
 
+// Import Google Drive service
+let driveService;
+try {
+  driveService = await import('./google_api/driveService.js');
+} catch (err) {
+  console.log('Google Drive service not available');
+  driveService = null;
+}
+
+export async function retrieveDocumentFromDrive(query, slackUserId) {
+  if (!driveService) return null;
+  
+  try {
+    const files = await driveService.searchFiles(slackUserId, query);
+    if (files.length > 0) {
+      const file = files[0];
+      // Would need to download and parse the file
+      return {
+        id: file.id,
+        name: file.name,
+        source: 'google_drive',
+        link: file.webViewLink
+      };
+    }
+  } catch (error) {
+    console.error('Error retrieving from Google Drive:', error);
+  }
+  return null;
+}
+
 export function retrieveDocument(query) {
   try {
     const normalizedQuery = query.toLowerCase().trim();
