@@ -1,6 +1,7 @@
 import {App} from '@slack/bolt';
 import dotenv from 'dotenv';
 import { retrieveDocument, listAllProjects, formatDocumentForSlack, searchDocuments } from './document-retriever.js';
+import { retrieveFromDrive } from './drive-document-retriever.js';
 
 dotenv.config();
 
@@ -75,7 +76,12 @@ app.message(/project/i, async ({ message, say }) => {
   }
 
   if (projectQuery) {
-    const document = retrieveDocument(projectQuery);
+    // Try Drive first (service account), then fall back to local sample docs.
+    let document = await retrieveFromDrive(projectQuery);
+    if (!document) {
+      document = retrieveDocument(projectQuery);
+    }
+
     const formattedDoc = formatDocumentForSlack(document);
     await say(formattedDoc);
   } else {
