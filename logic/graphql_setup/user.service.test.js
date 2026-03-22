@@ -23,7 +23,6 @@ describe('getAllUsers', () => {
     mockAll.mockReturnValue(mockUsers);
 
     const result = getAllUsers();
-
     expect(result).toHaveLength(2);
     expect(result[0].id).toBe('1');
     expect(result[1].created_at).toBe('2025-02-01');

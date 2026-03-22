@@ -3,6 +3,7 @@ import dotenv from 'dotenv';
 import { retrieveDocument, listAllProjects, formatDocumentForSlack, searchDocuments } from './document-retriever.js';
 import { retrieveFromDrive } from './drive-document-retriever.js';
 import slackHandlers from './google_api/slack.js';
+import { answerQuestion } from './logic/langChain/rag_implementation.js';
 
 dotenv.config();
 
@@ -22,7 +23,7 @@ const result = await app.client.conversations.list({
 const channel = result.channels.find(c => c.name === "all-project-keystone");
 const welcomeChannelId = channel.id;
 
-app.message('hello', async ({ message, say }) => {
+app.message(/hello/i, async ({ message, say }) => {
     console.log("User said hello");
   await say(`Hello, <@${message.user}>!`);
 });
@@ -48,50 +49,50 @@ app.event('team_join', async ({ event, client, logger }) => {
   }
 });
 
-app.message(/project/i, async ({ message, say }) => {
-  console.log("User asked about a project");
+// app.message(/project/i, async ({ message, say }) => {
+//   console.log("User asked about a project");
 
-  const text = message.text.toLowerCase();
+//   const text = message.text.toLowerCase();
 
-  if (text.includes('list') || text.includes('what projects') || text.includes('available projects')) {
-    const projects = listAllProjects();
-    const projectList = projects.map(p => `• *${p.name}*: ${p.description}`).join('\n');
+//   if (text.includes('list') || text.includes('what projects') || text.includes('available projects')) {
+//     const projects = listAllProjects();
+//     const projectList = projects.map(p => `• *${p.name}*: ${p.description}`).join('\n');
 
-    await say({
-      text: `Here are the available projects:\n\n${projectList}\n\nAsk me about any of these projects to get more details!`
-    });
-    return;
-  }
+//     await say({
+//       text: `Here are the available projects:\n\n${projectList}\n\nAsk me about any of these projects to get more details!`
+//     });
+//     return;
+//   }
 
-  let projectQuery = null;
+//   let projectQuery = null;
 
-  const patterns = [
-    /(?:about|regarding|on)\s+(?:project\s+)?(\w+)/i,
-    /(?:tell me about|info on|information about|what is|describe)\s+(?:project\s+)?(\w+)/i,
-    /project\s+(\w+)/i
-  ];
+//   const patterns = [
+//     /(?:about|regarding|on)\s+(?:project\s+)?(\w+)/i,
+//     /(?:tell me about|info on|information about|what is|describe)\s+(?:project\s+)?(\w+)/i,
+//     /project\s+(\w+)/i
+//   ];
 
-  for (const pattern of patterns) {
-    const match = text.match(pattern);
-    if (match && match[1]) {
-      projectQuery = match[1];
-      break;
-    }
-  }
+//   for (const pattern of patterns) {
+//     const match = text.match(pattern);
+//     if (match && match[1]) {
+//       projectQuery = match[1];
+//       break;
+//     }
+//   }
 
-  if (projectQuery) {
-    // Try Drive first (service account), then fall back to local sample docs.
-    let document = await retrieveFromDrive(projectQuery);
-    if (!document) {
-      document = retrieveDocument(projectQuery);
-    }
+//   if (projectQuery) {
+//     // Try Drive first (service account), then fall back to local sample docs.
+//     let document = await retrieveFromDrive(projectQuery);
+//     if (!document) {
+//       document = retrieveDocument(projectQuery);
+//     }
 
-    const formattedDoc = formatDocumentForSlack(document);
-    await say(formattedDoc);
-  } else {
-    await say("I can help you find information about our projects! Try asking:\n• 'List all projects'\n• 'Tell me about Project Alpha'\n• 'What is Project Beta?'\n• 'Info on Project Gamma'");
-  }
-});
+//     const formattedDoc = formatDocumentForSlack(document);
+//     await say(formattedDoc);
+//   } else {
+//     await say("I can help you find information about our projects! Try asking:\n• 'List all projects'\n• 'Tell me about Project Alpha'\n• 'What is Project Beta?'\n• 'Info on Project Gamma'");
+//   }
+// });
 
 app.message(/^help$/i, async ({ say }) => {
   await say({
@@ -108,18 +109,22 @@ app.message(/^help$/i, async ({ say }) => {
   });
 });
 
-app.message(async ({ message, say }) => {
+app.event('app_mention', async ({ event, say }) => {
+  const question = event.text.replace(/<@[^>]+>/, '').trim(); // Remove bot mention from the message
+  console.log("User asked a question:", question);
+  const responseText = await answerQuestion(question);
+  await say({text: responseText});
 });
 
 (async () => {
-  try {
-    await app.client.chat.postMessage({
-      channel: welcomeChannelId,
-      text: "Hello! I just started up!"
-    });
-  } catch (error) {
-    console.error("Error sending startup message:", error);
-  }
+  // try {
+  //   await app.client.chat.postMessage({
+  //     channel: welcomeChannelId,
+  //     text: "Hello! I just started up!"
+  //   });
+  // } catch (error) {
+  //   console.error("Error sending startup message:", error);
+  // }
 
   await app.start();
   console.log("⚡️ Slack bot is running in socket mode!");

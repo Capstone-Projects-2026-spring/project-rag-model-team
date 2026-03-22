@@ -1,12 +1,15 @@
-require('dotenv').config();
-const express = require('express');
-const cors = require('cors');
-const session = require('express-session');
-const bodyParser = require('body-parser');
-const initSqlJs = require('sql.js');
-const fs = require('fs');
-const path = require('path');
-
+import 'dotenv/config';
+import express from 'express';
+import cors from 'cors';
+import session from 'express-session';
+import bodyParser from 'body-parser';
+import initSqlJs from 'sql.js';
+import fs from 'fs';
+import path from 'path';
+import { dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+    
+const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = process.env.PORT || 3001;
 
@@ -22,6 +25,9 @@ async function initDatabase() {
   if (fs.existsSync(dbPath)) {
     const buffer = fs.readFileSync(dbPath);
     db = new SQL.Database(buffer);
+    
+    // Run migrations for existing databases
+    runMigrations();
   } else {
     db = new SQL.Database();
     // Create tables
@@ -40,6 +46,25 @@ function saveDatabase() {
     fs.mkdirSync(dir, { recursive: true });
   }
   fs.writeFileSync(dbPath, buffer);
+}
+
+// Run database migrations
+function runMigrations() {
+  try {
+    // Check if user_info table has session_id column
+    const result = db.exec("PRAGMA table_info(user_info)");
+    const columns = result[0]?.values || [];
+    const hasSessionId = columns.some(col => col[1] === 'session_id');
+    
+    if (!hasSessionId) {
+      console.log('🔄 Adding session_id column to user_info table...');
+      db.run("ALTER TABLE user_info ADD COLUMN session_id TEXT UNIQUE");
+      saveDatabase();
+      console.log('✅ Migration completed: session_id column added');
+    }
+  } catch (error) {
+    console.error('❌ Migration failed:', error.message);
+  }
 }
 
 // Helper functions for database operations
@@ -346,4 +371,4 @@ process.on('SIGINT', () => {
   process.exit(0);
 });
 
-module.exports = {app, db, getOne, getAll, runQuery, initDatabase};
+export { app, db, getOne, getAll, runQuery, initDatabase };

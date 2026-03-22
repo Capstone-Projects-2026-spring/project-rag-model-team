@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS user_profiles (
 CREATE TABLE IF NOT EXISTS user_info (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     profile_id INTEGER NOT NULL,
+    session_id TEXT,
     name TEXT,
     email TEXT,
     role TEXT NOT NULL, -- e.g., 'junior_dev', 'senior_dev', 'manager', 'designer', etc.
