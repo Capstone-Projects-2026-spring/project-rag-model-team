@@ -30,8 +30,16 @@ Describe the initial design concept: Hardware/software architecture, programming
 The background will contain a more detailed description of the product and a comparison to existing similar projects/products. A literature search should be conducted and the results listed. Proper citation of sources is required. If there are similar open-source products, you should state whether existing source will be used and to what extent. If there are similar closed-source/proprietary products, you should state how the proposed product will be similar and different.
 
 ## Required Resources
-
-Discuss what you need to develop this project. This includes background information you will need to acquire, hardware resources, and software resources. If these are not part of the standard Computer Science Department lab resources, these must be identified early and discussed with the instructor.
+To develop and run this project locally, the following hardware, operating system, software tools, and external services are required.
+-	A personal computer or laptop capable of running Node.js applications
+-	The project supports the following operating systems:
+	•	Windows 10 or later
+	•	macOS (Ventura or later recommended)
+	•	Linux (Ubuntu 20.04+ recommended)
+-	Internet connection (required for Slack API and LLM API access)
+-	Core Runtime Environment
+	•	Node.js (v18 or newer recommended)
+	•	npm (comes bundled with Node.js)
 
 ## Starting the Slack Bot
 
@@ -39,8 +47,20 @@ Discuss what you need to develop this project. This includes background informat
 cd slack-bot
 npm install
 copy .env.example .env
-# Edit .env and add your Slack tokens
-npm start
+# Edit .env and add your:
+Get these from api.slack.com → Your App → OAuth & Permissions
+SLACK_BOT_TOKEN = starting with xoxb-
+SLACK_APP_TOKEN =starting with xapp-
+LLM API KEY
+
+-npm run init-db (Run only first time to initialize the database)
+-npm start
+
+If npm start fails, run each of the below individual scripts in a separate terminal to identify the issue.
+npm run sql-db    # Database only
+npm run graph     # GraphQL only
+npm run bot       # Bot only
+npm test          # Run tests
 ```
 
 ## Collaborators
