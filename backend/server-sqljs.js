@@ -29,11 +29,15 @@ async function initDatabase() {
     // Run migrations for existing databases
     runMigrations();
   } else {
+    console.log('Creating fresh database...');
     db = new SQL.Database();
     // Create tables
     const schema = fs.readFileSync(path.join(__dirname, 'database', 'schema.sql'), 'utf8');
+    console.log('Applying schema...');
     db.run(schema);
+    console.log('Schema applied successfully');
     saveDatabase();
+    console.log('Database saved');
   }
 }
 
@@ -50,7 +54,12 @@ function saveDatabase() {
 
 // Run database migrations
 function runMigrations() {
-  try {
+  try {    
+    console.log('Checking for database migrations...');
+    
+    // Check if tables exist
+    const tables = getAll("SELECT name FROM sqlite_master WHERE type='table'");
+    console.log('Existing tables:', tables.map(t => t.name));
     // Check if user_info table has session_id column
     const result = db.exec("PRAGMA table_info(user_info)");
     const columns = result[0]?.values || [];
@@ -88,15 +97,54 @@ function getAll(sql, params = []) {
 }
 
 function runQuery(sql, params = []) {
-  const stmt = db.prepare(sql);
-  stmt.bind(params);
-  stmt.step();
-  stmt.free();
-  saveDatabase();
+  console.log('Executing SQL:', sql, 'with params:', params);
+  try {
+    const stmt = db.prepare(sql);
+    
+    // Check if statement preparation failed
+    if (stmt.errno) {
+      const errorMsg = db.errmsg();
+      console.error('Statement preparation error:', errorMsg);
+      throw new Error(`SQL Prepare Error: ${errorMsg}`);
+    }
+    
+    stmt.bind(params);
+    const result = stmt.step(); // Get the result of the step
+    console.log('Step result:', result);
 
-  // Get last insert ID
-  const result = getOne('SELECT last_insert_rowid() as id');
-  return { lastInsertRowid: result ? result.id : null };
+    // Check for execution errors
+    if (stmt.errno) {
+      const errorMsg = db.errmsg();
+      console.error('Statement execution error:', errorMsg);
+      stmt.free();
+      throw new Error(`SQL Execute Error: ${errorMsg}`);
+    }
+
+    stmt.free();
+    saveDatabase();
+
+    // For INSERT statements, return last insert rowid
+    if (sql.trim().toUpperCase().startsWith('INSERT')) {
+      const lastIdResult = getOne('SELECT last_insert_rowid() as id');
+      console.log('Last insert ID result:', lastIdResult);
+      
+      // If last_insert_rowid() returns 0 or null, try to get the max id
+      if (!lastIdResult || !lastIdResult.id) {
+        console.log('last_insert_rowid() failed, trying MAX(id)...');
+        const maxIdResult = getOne('SELECT MAX(id) as id FROM user_profiles');
+        console.log('MAX id result:', maxIdResult);
+        return { lastInsertRowid: maxIdResult ? maxIdResult.id : null };
+      }
+      
+      return { lastInsertRowid: lastIdResult.id };
+    }
+
+    // For other statements, return the step result
+    return { result };
+  } catch (error) {
+    console.error('Error in runQuery:', error);
+    throw error;
+  }
 }
 
 // Middleware
