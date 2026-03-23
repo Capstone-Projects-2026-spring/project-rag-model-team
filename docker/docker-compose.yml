@@ -1,0 +1,37 @@
+version: '3.8'
+
+services:
+  db:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.database
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./database:/app/database  # persist SQLite file
+    env_file: .env
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  graphql:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.graph
+    ports:
+      - "4000:4000"
+    env_file: .env
+    depends_on:
+      db:
+        condition: service_healthy
+
+  bot:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.bot
+    env_file: .env
+    depends_on:
+      graphql:
+        condition: service_started
