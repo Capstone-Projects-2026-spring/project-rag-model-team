@@ -9,10 +9,10 @@ export default buildSchema(`
   }
 
   type Profile {
-    profile: User
-    session_id: String
+    id: ID!
+    session_id: String!
     userInfo: UserInfo
-    hasCompletedIntake: Boolean
+    hasCompletedIntake: Boolean!
   }
 
   type UserInfo {

@@ -40,9 +40,9 @@ const userInformationPrompt = PromptTemplate.fromTemplate(`
     User information:
     {userInfo}
 
-    If you suggest a list of users, please format it as "I suggest the following users: @user1, @user2, and @user3 because...". If you only suggest one user, please format it as "I suggest @user1 because...".
+    If the user is asking information about hierarchy in the organization, then you may list out the multiple users and their roles. If the user is asking about who might be helpful for a question on a certain topic, you can use the information about users' roles, experience levels, departments, and areas of interest to make suggestions.
     If there are no users that seem helpful for questions about the topic, say something like "I don't think there are any users that may be helpful to answer this question".
-    For example format your answer as a response to a question on the topic, "This person may be useful for questions about {topic} because...". If you don't have enough information to make a suggestion, say "I don't know".
+    Please answer in natural language, as if you were responding to a question about {topic} with suggestions of who might be helpful to answer questions about that topic. You can use the information about users' roles, experience levels, departments, and areas of interest to make suggestions.
 `);
 
 //JSON ONLY
@@ -140,24 +140,22 @@ export async function answerQuestion(message){
         //This takes care of all user information retrieval
         if (intent.type === 'GET_USER' || intent.action === 'GET_USER') {
             //Client side request for the list of all users, which we can then use to suggest who might be helpful for a question on a certain topic
-            const data = await queryGraphQL(`query GetAllUserProfiles {
-                                                getAllUserProfiles {
-                                                    profile {
-                                                    id
-                                                    created_at
-                                                    }
-                                                    userInfo {
-                                                    name
-                                                    email
-                                                    role
-                                                    experience_level
-                                                    department
-                                                    }
-                                                    hasCompletedIntake
-                                                }
-                                                }`);
-            console.log("All users:", data);
-            const suggestion = await suggestUserForTopic(data.getAllUsers, message);
+            const data = await queryGraphQL(`{
+  getAllUserProfiles {
+    id
+    session_id
+    userInfo {
+      name
+      email
+      role
+      experience_level
+      department
+    }
+    hasCompletedIntake
+  }
+}`);
+            console.log("All users:", JSON.stringify(data,null,2));
+            const suggestion = await suggestUserForTopic(JSON.stringify(data,null,2), message);
             console.log("User suggestion:", suggestion);
             return suggestion;
             
