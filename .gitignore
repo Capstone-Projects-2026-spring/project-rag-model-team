@@ -10,6 +10,10 @@ node_modules
 .env.production.local
 node_modules
 package.json
-package-lock.json
 service-account-key.json
 *.pem
+*.db
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
