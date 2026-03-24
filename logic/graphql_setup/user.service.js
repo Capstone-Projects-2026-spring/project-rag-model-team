@@ -1,4 +1,4 @@
-import db from '../../backend/server-sqljs.js';
+import db from '../database/sqlite.js';
 
 export function getAllUsers() {
   return db.prepare(`

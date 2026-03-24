@@ -2,7 +2,7 @@ import { jest } from '@jest/globals';
 
 const mockAll = jest.fn();
 
-await jest.unstable_mockModule('../../backend/server-sqljs.js', () => ({
+await jest.unstable_mockModule('../database/sqlite.js', () => ({
   default: {
     prepare: jest.fn(() => ({ all: mockAll })),
   },
