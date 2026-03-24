@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS user_interactions (
     interaction_type TEXT NOT NULL, -- e.g., 'page_view', 'search', 'feedback'
     content_id TEXT,
     content_title TEXT,
-    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     metadata TEXT, -- JSON as TEXT for additional context
     FOREIGN KEY (profile_id) REFERENCES user_profiles(id) ON DELETE CASCADE
 );
@@ -43,4 +43,4 @@ CREATE INDEX IF NOT EXISTS idx_user_info_profile ON user_info(profile_id);
 CREATE INDEX IF NOT EXISTS idx_user_info_role ON user_info(role);
 CREATE INDEX IF NOT EXISTS idx_user_info_experience ON user_info(experience_level);
 CREATE INDEX IF NOT EXISTS idx_interactions_profile ON user_interactions(profile_id);
-CREATE INDEX IF NOT EXISTS idx_interactions_timestamp ON user_interactions(timestamp);
+CREATE INDEX IF NOT EXISTS idx_interactions_timestamp ON user_interactions(created_at);

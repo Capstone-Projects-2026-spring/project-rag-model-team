@@ -1,12 +1,15 @@
-import { getOne, getAll, runQuery } from '../../backend/server-sqljs.js';
+import { getOne, getAll, runQuery } from '../database/sqlite.js';
 
 export const root = {
+  // Simple health check query
   health: () => ({ status: 'ok', message: 'Server is running' }),
+  // Fetch all users
   getAllUsers: () => getAll(`SELECT id, session_id, created_at FROM user_profiles`),
+  // Fetch a user by ID
   getUserByID: ({ id }) => getOne(`SELECT id, session_id, created_at FROM user_profiles WHERE id = ?`, [id]),
+  // Fetch all user profiles with their associated user info
   getAllUserProfiles: () => {
     const profiles = getAll(`SELECT id, session_id, created_at FROM user_profiles`);
-
     return profiles.map(profile => {
       const userInfo = getOne(
         `SELECT * FROM user_info WHERE profile_id = ?`,
@@ -20,6 +23,7 @@ export const root = {
       };
     });
   },
+  // Fetch a user profile by session_id with associated user info
   getUserProfile: ({ session_id }) => {
     const profile = getOne(
       `SELECT id, session_id, created_at FROM user_profiles WHERE session_id = ?`,
@@ -42,7 +46,7 @@ export const root = {
       hasCompletedIntake: userInfo ? true : false
     };
   },
-  
+  // Mutation for creating a new user profile along with user info
   createUserProfile: ({ input }) => {
     try {
       console.log('Creating user profile with input:', input);
@@ -113,6 +117,7 @@ export const root = {
       throw new Error(`Failed to create user profile: ${error.message}`);
     }
   },
+  // Mutation for updating an existing user profile and user info
   updateUserProfile: ({ session_id, input }) => {
     try {
       // First get the user profile
@@ -196,6 +201,7 @@ export const root = {
       throw new Error(`Failed to update user profile: ${error.message}`);
     }
   },
+  // Mutation for removing a user profile and associated user info
   removeUser: ({ id }) => {
     runQuery(`DELETE FROM user_profiles WHERE id = ?`, [id]);
     runQuery(`DELETE FROM user_info WHERE profile_id = ?`, [id]);
@@ -208,5 +214,38 @@ export const root = {
     }
 
     return false;   // row still exists, delete failed
+  },
+  // Mutation for creating a new interaction record (for tracking user interactions with content)
+  createRecord: ({ session_id, interactionType, contentId, contentTitle, metadata }) => {
+    try {
+      // Get the user profile by session_id
+      const profile = getOne(
+        `SELECT id FROM user_profiles WHERE session_id = ?`,
+        [session_id]
+      );
+
+      if (!profile) {
+        throw new Error(`User profile with session_id ${session_id} not found`);
+      }
+
+      // Insert the interaction record
+      runQuery(
+        `INSERT INTO user_interactions (profile_id, interaction_type, content_id, content_title, metadata)
+         VALUES (?, ?, ?, ?, ?)`,
+        [
+          profile.id,
+          interactionType,
+          contentId,
+          contentTitle,
+          JSON.stringify(metadata || {})
+        ]
+      );
+
+      return { success: true, message: 'Interaction tracked' };
+    } catch (error) {
+      console.error('Error in createRecord:', error);
+      throw new Error(`Failed to create interaction record: ${error.message}`);
+    }
   }
+
 };

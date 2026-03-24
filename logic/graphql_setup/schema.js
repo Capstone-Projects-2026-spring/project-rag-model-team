@@ -45,11 +45,22 @@ export default buildSchema(`
     getUserProfile(session_id: String!): Profile
   }
 
+  type Interaction {
+    id: ID!
+    profile_id: ID
+    interaction_type: String
+    content_id: String
+    content_title: String
+    metadata: String
+    created_at: String
+  }
+
   type Mutation {
     createUser(session_id: String!): User
     createUserProfile(input: UserProfileInput!): Profile
     updateUserProfile(session_id: String!, input: UserProfileInput!): Profile
     removeUser(id: ID!): Boolean
+    createInteraction(session_id: String!, interactionType: String!, contentId: String!, contentTitle: String!, metadata: String): Boolean
   }
 
   input UserProfileInput {

@@ -64,18 +64,25 @@ const driveSearchSelectionPrompt = PromptTemplate.fromTemplate(`
 //Functions to call the chains and decide what to do with the results
 
 async function parseIntent(message) {
-  const result = await intentChain.invoke({ message });
-  //console.log("Raw intent result:", result);
+  console.log("parseIntent invoked with message:", message);
   try {
-    return JSON.parse(result);
-  } catch {
+    const result = await intentChain.invoke({ message });
+    console.log("Raw intent result:", result);
+    try {
+      return JSON.parse(result);
+    } catch (jsonError) {
+      console.warn("Intent parse JSON failed, defaulting GENERAL; result:", result, jsonError);
+      return { type: 'GENERAL' };
+    }
+  } catch (invokeError) {
+    console.error("intentChain.invoke failed:", invokeError);
     return { type: 'GENERAL' };
   }
 }
 
 async function suggestUserForTopic(userInfo, topic) {
   const result = await userInfoChain.invoke({ userInfo, topic });
-  //console.log("Raw user suggestion result:", result);
+  console.log("Raw user suggestion result:", result);
   return result;
 }
 
