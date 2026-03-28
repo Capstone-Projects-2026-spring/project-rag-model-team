@@ -1,73 +1,171 @@
 <div align="center">
 
 # The Keystone Project
+
 [![Report Issue on Jira](https://img.shields.io/badge/Report%20Issues-Jira-0052CC?style=flat&logo=jira-software)](https://temple-cis-projects-in-cs.atlassian.net/jira/software/c/projects/DT/issues)
 [![Deploy Docs](https://github.com/ApplebaumIan/tu-cis-4398-docs-template/actions/workflows/deploy.yml/badge.svg)](https://github.com/ApplebaumIan/tu-cis-4398-docs-template/actions/workflows/deploy.yml)
 [![Documentation Website Link](https://img.shields.io/badge/-Documentation%20Website-brightgreen)](https://capstone-projects-2026-spring.github.io/project-rag-model-team/)
 
-
 </div>
-
 
 ## Keywords
 
-Section #, as well as any words that quickly give your peers insights into the application like programming language, development platform, type of application, etc.
+Retrieval-Augmented Generation, Slack bot, onboarding assistant, Node.js, Slack Bolt, GraphQL, SQL.js, Google Drive, Groq, documentation assistant, project knowledge base
 
 ## Project Abstract
 
-This document proposes a novel application of a RAG Model applied in a work software context. It will support new team members by giving them tools and offer information that may speed up the process of adapting to a new team. For experienced members of the group, it can help build connection with the new members. For team leads, it will keep them up to date on the current stages of their work the team members are working on. 
+The Keystone Project is a Slack-based onboarding and knowledge assistant for software teams. It uses a Retrieval-Augmented Generation(RAG) workflow to answer questions about project documentation, suggest people who may be helpful for a topic, and surface information stored in team data sources. The system is designed to reduce onboarding time for new contributors, lower the number of repetitive support questions, and make project knowledge easier to access from within Slack.
 
 ## High Level Requirement
 
-Describe the requirements – i.e., what the product does and how it does it from a user point of view – at a high level.
+At a high level, the system should let a user ask project-related questions from Slack and receive a relevant answer without manually searching multiple documents or asking teammates directly. From the user perspective, the bot should be able to respond to direct Slack interactions, identify whether a question is about people or documentation, and use the appropriate backend source to produce a useful reply. The system should also support profile and onboarding information so the bot can be extended to give more personalized help over time.
 
 ## Conceptual Design
 
-Describe the initial design concept: Hardware/software architecture, programming language, operating system, etc.
+The project is built as a Node.js application using Slack Bolt for the bot interface. A GraphQL layer provides access to stored user and profile information, while a SQL.js-backed SQLite database stores user profiles and interaction-related data. For document retrieval, the bot can access JSON-based documentation stored in Google Drive through a service account. For answer generation and routing, the project uses LangChain prompt pipelines with a Groq-hosted LLM. Documentation for the project is maintained separately in a Docusaurus site.
 
 ## Background
 
-The background will contain a more detailed description of the product and a comparison to existing similar projects/products. A literature search should be conducted and the results listed. Proper citation of sources is required. If there are similar open-source products, you should state whether existing source will be used and to what extent. If there are similar closed-source/proprietary products, you should state how the proposed product will be similar and different.
+Many teams store onboarding and project knowledge across chat threads, internal docs, shared folders, and informal team memory. That makes it difficult for new contributors to find the right answers quickly and often increases the support burden on more experienced teammates. Keystone addresses that problem by bringing question answering into Slack, where users already work, and routing questions toward structured team profile data or project documents. Unlike a general-purpose chatbot, it is intended to answer with information grounded in team-specific data sources such as Google Drive documents and stored user profiles.
 
 ## Required Resources
+
 To develop and run this project locally, the following hardware, operating system, software tools, and external services are required.
--	A personal computer or laptop capable of running Node.js applications
--	The project supports the following operating systems:
-	•	Windows 10 or later
-	•	macOS (Ventura or later recommended)
-	•	Linux (Ubuntu 20.04+ recommended)
--	Internet connection (required for Slack API and LLM API access)
--	Core Runtime Environment
-	•	Node.js (v18 or newer recommended)
-	•	npm (comes bundled with Node.js)
+
+- A personal computer capable of running Node.js applications
+- Node.js 18 or newer
+- npm
+- Internet access for Slack, Groq, and Google Drive integrations
+- A Slack app with bot token and app token configured for Socket Mode
+- A Groq API key
+- Optional Google service account credentials if you want Drive-backed document retrieval
+- Supported operating systems:
+  - Windows 10 or later
+  - macOS
+  - Linux
 
 ## Starting the Slack Bot
 
 ```bash
-cd slack-bot
+git clone https://github.com/Capstone-Projects-2026-spring/project-rag-model-team.git
+cd project-rag-model-team
 npm install
-copy .env.example .env
-# Edit .env and add your:
-Get these from api.slack.com → Your App → OAuth & Permissions
-SLACK_BOT_TOKEN = starting with xoxb-
-SLACK_APP_TOKEN =starting with xapp-
-LLM API KEY
-
--npm run init-db (Run only first time to initialize the database)
--npm start
-
-If npm start fails, run each of the below individual scripts in a separate terminal to identify the issue.
-npm run sql-db    # Database only
-npm run graph     # GraphQL only
-npm run bot       # Bot only
-npm test          # Run tests
+cp .env.example .env
 ```
+
+After copying `.env.example` to `.env`, open `.env` and fill in the required values.
+
+### 1. Slack App Setup
+
+Go to the Slack developer portal:
+
+- https://api.slack.com/apps
+
+Create and configure the Slack app:
+
+1. Click `Create New App`.
+2. Choose `From scratch`.
+3. Enter an app name and select the Slack workspace where you want to install it.
+4. In the app settings, open `Socket Mode` and turn on `Enable Socket Mode`.
+5. In `Basic Information`, create an app-level token with the `connections:write` scope.
+   Save the generated token that starts with `xapp-` as `SLACK_APP_TOKEN`.
+6. Open `OAuth & Permissions`.
+7. Under `Bot Token Scopes`, add the scopes your app needs. Based on this project's current implementation, the bot may need scopes such as:
+   - `app_mentions:read`
+   - `channels:read`
+   - `channels:history`
+   - `chat:write`
+   - `chat:write.public`
+   - `commands`
+   - `im:history`
+   - `im:write`
+   - `reactions:read`
+   - `users:read`
+8. Click `Install App to Workspace`.
+9. After installation, copy the bot token that starts with `xoxb-` and save it as `SLACK_BOT_TOKEN`.
+
+Put the Slack values into `.env`:
+
+- `SLACK_BOT_TOKEN` from your Slack app OAuth settings
+- `SLACK_APP_TOKEN` from your Slack app Socket Mode settings
+
+### 2. Groq API Key Setup
+
+Go to the Groq console:
+
+- https://console.groq.com/
+
+Create the API key:
+
+1. Sign in or create an account.
+2. Open the API keys area in the Groq console.
+3. Create a new API key.
+4. Copy the key and place it in `.env` as `GROQ_API_KEY`.
+
+If you want Google Drive document retrieval to work, also make sure:
+
+### 3. Optional Google Drive Service Account Setup
+
+This step is only needed if you want the bot to read project documents from Google Drive.
+
+Use the Google Cloud Console:
+
+- https://console.cloud.google.com/
+
+Create and configure the service account:
+
+1. Create or select a Google Cloud project.
+2. Enable the Google Drive API for that project.
+3. Go to `IAM & Admin` -> `Service Accounts`.
+4. Create a service account for the project.
+5. Open that service account and create a JSON key.
+6. Download the JSON key file.
+7. Place the file in the project root, or another secure local path.
+8. Set `GOOGLE_SERVICE_ACCOUNT_KEY_PATH` in `.env` to that file path.
+9. If you only want the bot to search a specific Drive folder, set `GOOGLE_DRIVE_FOLDER_ID`.
+10. Share the target Drive folder or files with the service account email so it can read them.
+
+Your `.env` should contain at least:
+
+```env
+SLACK_BOT_TOKEN=xoxb-your-bot-token
+SLACK_APP_TOKEN=xapp-your-app-token
+GROQ_API_KEY=your-groq-api-key
+GOOGLE_SERVICE_ACCOUNT_KEY_PATH=./service-account-key.json
+GOOGLE_DRIVE_FOLDER_ID=
+```
+
+Start the supporting GraphQL service in one terminal:
+
+```bash
+node logic/graphql_setup/graphql_implementation.js
+```
+
+Start the Slack bot in a second terminal:
+
+```bash
+npm start
+```
+
+Optional verification:
+
+```bash
+npm test
+```
+
+Notes:
+
+- The main bot entry point is the root `index.js`, not `slack-bot/slack-bot.js`.
+- The GraphQL service should be running before testing user-profile questions.
+- Database initialization happens automatically when the backend/GraphQL layer starts.
+- If Google Drive credentials are missing, the bot can still start, but Drive-backed retrieval features will not work.
 
 ## Collaborators
 
 <div align="center">
 
-[//]: # (Replace with your collaborators)
+[//]: # "Replace with your collaborators"
+
 [William Sims](https://github.com/wSimsT)
 [Kidus Adamte](https://github.com/kidham3207)
 [Billy Nguyen](https://github.com/bnguye04)
