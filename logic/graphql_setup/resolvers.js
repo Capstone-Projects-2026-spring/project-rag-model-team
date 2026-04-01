@@ -1,4 +1,5 @@
 import { getOne, getAll, runQuery } from '../database/sqlite.js';
+import { getClassificationForRole } from '../security/access_control.js';
 
 export const root = {
   // Simple health check query
@@ -50,6 +51,7 @@ export const root = {
   createUserProfile: ({ input }) => {
     try {
       console.log('Creating user profile with input:', input);
+      const classificationLevel = getClassificationForRole(input.role);
       
       // First create the user profile
       runQuery(
@@ -74,15 +76,16 @@ export const root = {
       console.log('Creating user info for profile ID:', profileId);
       const infoResult = runQuery(
         `INSERT INTO user_info (
-          profile_id, session_id, name, email, role, experience_level, department,
+          profile_id, session_id, name, email, role, classification_level, experience_level, department,
           areas_of_interest, technical_skills, learning_goals, preferred_content_complexity
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           profileId,
           input.session_id,
           input.name || null,
           input.email || null,
           input.role,
+          classificationLevel,
           input.experience_level,
           input.department || null,
           input.areas_of_interest || null,
@@ -120,6 +123,7 @@ export const root = {
   // Mutation for updating an existing user profile and user info
   updateUserProfile: ({ session_id, input }) => {
     try {
+      const classificationLevel = getClassificationForRole(input.role);
       // First get the user profile
       const profile = getOne(
         `SELECT id, session_id, created_at FROM user_profiles WHERE session_id = ?`,
@@ -140,7 +144,7 @@ export const root = {
         // Update existing user_info
         runQuery(
           `UPDATE user_info SET
-            name = ?, email = ?, role = ?, experience_level = ?, department = ?,
+            name = ?, email = ?, role = ?, classification_level = ?, experience_level = ?, department = ?,
             areas_of_interest = ?, technical_skills = ?, learning_goals = ?, preferred_content_complexity = ?,
             updated_at = CURRENT_TIMESTAMP
            WHERE profile_id = ?`,
@@ -148,6 +152,7 @@ export const root = {
             input.name || null,
             input.email || null,
             input.role,
+            classificationLevel,
             input.experience_level,
             input.department || null,
             input.areas_of_interest || null,
@@ -161,15 +166,16 @@ export const root = {
         // Create new user_info
         runQuery(
           `INSERT INTO user_info (
-            profile_id, session_id, name, email, role, experience_level, department,
+            profile_id, session_id, name, email, role, classification_level, experience_level, department,
             areas_of_interest, technical_skills, learning_goals, preferred_content_complexity
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             profile.id,
             session_id,
             input.name || null,
             input.email || null,
             input.role,
+            classificationLevel,
             input.experience_level,
             input.department || null,
             input.areas_of_interest || null,
@@ -216,9 +222,8 @@ export const root = {
     return false;   // row still exists, delete failed
   },
   // Mutation for creating a new interaction record (for tracking user interactions with content)
-  createRecord: ({ session_id, interactionType, contentId, contentTitle, metadata }) => {
+  createInteraction: ({ session_id, interactionType, contentId, contentTitle, metadata }) => {
     try {
-      // Get the user profile by session_id
       const profile = getOne(
         `SELECT id FROM user_profiles WHERE session_id = ?`,
         [session_id]
@@ -228,7 +233,6 @@ export const root = {
         throw new Error(`User profile with session_id ${session_id} not found`);
       }
 
-      // Insert the interaction record
       runQuery(
         `INSERT INTO user_interactions (profile_id, interaction_type, content_id, content_title, metadata)
          VALUES (?, ?, ?, ?, ?)`,
@@ -241,9 +245,9 @@ export const root = {
         ]
       );
 
-      return { success: true, message: 'Interaction tracked' };
+      return true;
     } catch (error) {
-      console.error('Error in createRecord:', error);
+      console.error('Error in createInteraction:', error);
       throw new Error(`Failed to create interaction record: ${error.message}`);
     }
   }

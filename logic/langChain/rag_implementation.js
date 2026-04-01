@@ -4,10 +4,18 @@ import { PromptTemplate } from '@langchain/core/prompts';
 import { StringOutputParser } from '@langchain/core/output_parsers';
 import {listFiles, getFile} from '../../google_api/driveService.js';
 import { queryGraphQL } from '../graphql_setup/graphql_client.js';
+import {
+  buildAccessDeniedMessage,
+  filterAccessibleFiles,
+  filterAccessibleProfiles,
+  getClassificationForRole
+} from '../security/access_control.js';
 
 dotenv.config();
 
 const llm = new ChatGroq({ apiKey: process.env.GROQ_API_KEY, model: 'llama-3.1-8b-instant' });
+
+const GREETING_PATTERN = /^(hi|hello|hey|howdy|good morning|good afternoon|good evening)\b/i;
 
 // Helper function to convert stream to string
 async function streamToString(stream) {
@@ -86,10 +94,84 @@ async function suggestUserForTopic(userInfo, topic) {
   return result;
 }
 
-async function searchDriveForTopic(topic) {
+function isGreetingMessage(message) {
+  return GREETING_PATTERN.test(String(message || '').trim());
+}
+
+function buildGreetingResponse(requesterContext) {
+  if (requesterContext?.role) {
+    return "Hello! I'm Keystone Bot. Ask me about project documentation or who might be helpful for a topic.";
+  }
+
+  return "Hello! I'm Keystone Bot. Complete your profile setup in DM if you'd like access tailored to your role.";
+}
+
+async function getRequesterAccessContext(requesterSessionId) {
+  if (!requesterSessionId) {
+    return {
+      session_id: null,
+      role: null,
+      classification_level: 'public'
+    };
+  }
+
+  try {
+    const data = await queryGraphQL(
+      `query GetRequesterProfile($session_id: String!) {
+        getUserProfile(session_id: $session_id) {
+          session_id
+          userInfo {
+            role
+            classification_level
+          }
+        }
+      }`,
+      { session_id: requesterSessionId }
+    );
+
+    const requesterProfile = data?.getUserProfile;
+    const requesterInfo = requesterProfile?.userInfo;
+
+    if (!requesterInfo) {
+      return {
+        session_id: requesterSessionId,
+        role: null,
+        classification_level: 'public'
+      };
+    }
+
+    return {
+      session_id: requesterSessionId,
+      role: requesterInfo?.role || null,
+      classification_level:
+        requesterInfo?.classification_level ||
+        getClassificationForRole(requesterInfo?.role)
+    };
+  } catch (error) {
+    console.error('Error loading requester access context:', error);
+    return {
+      session_id: requesterSessionId,
+      role: null,
+      classification_level: 'public'
+    };
+  }
+}
+
+async function searchDriveForTopic(topic, requesterContext) {
   const files = await listFiles();
-  //console.log("Files in drive:", files);
-  const fileSuggestionsString = await driveSearchChain.invoke({ files: JSON.stringify(files), topic });
+  const accessibleFiles = filterAccessibleFiles(
+    files,
+    requesterContext.classification_level
+  );
+
+  if (accessibleFiles.length === 0) {
+    return buildAccessDeniedMessage(topic);
+  }
+
+  const fileSuggestionsString = await driveSearchChain.invoke({
+    files: JSON.stringify(accessibleFiles),
+    topic
+  });
   //console.log("Suggested Files (raw):", fileSuggestionsString);
   
   let fileSuggestions;
@@ -104,11 +186,24 @@ async function searchDriveForTopic(topic) {
   if (!Array.isArray(fileSuggestions) || fileSuggestions.length === 0) {
     return "Sorry, I couldn't find relevant information in our documents.";
   }
+
+  const accessibleFilesById = new Map(
+    accessibleFiles.map(file => [file.id, file])
+  );
+  const authorizedSuggestions = fileSuggestions
+    .map(file => accessibleFilesById.get(file.id))
+    .filter(Boolean);
+
+  if (authorizedSuggestions.length === 0) {
+    return buildAccessDeniedMessage(topic);
+  }
+
   try {
-    const fileContents = await Promise.all(fileSuggestions.map(async file => {
+    const fileContents = await Promise.all(authorizedSuggestions.map(async file => {
         try {
           const stream = await getFile(file.id);
-          return await streamToString(stream);
+          const content = await streamToString(stream);
+          return `File: ${file.name}\nClassification: ${file.classification_level}\n\n${content}`;
         } catch (error) {
           console.error(`Error reading file ${file.id}:`, error);
           return `Error reading file: ${error.message}`;
@@ -139,8 +234,14 @@ const driveSearchChain = driveSearchPrompt.pipe(llm).pipe(new StringOutputParser
 const driveSearchSelectionChain = driveSearchSelectionPrompt.pipe(llm).pipe(new StringOutputParser());
 
 //Main function to decide what to do with a message based on the parsed intent
-export async function answerQuestion(message){
+export async function answerQuestion(message, requesterSessionId = null){
     try {
+        const requesterContext = await getRequesterAccessContext(requesterSessionId);
+
+        if (isGreetingMessage(message)) {
+            return buildGreetingResponse(requesterContext);
+        }
+
         const intent = await parseIntent(message);
         console.log("Parsed intent:", intent);
         
@@ -155,20 +256,35 @@ export async function answerQuestion(message){
       name
       email
       role
+      classification_level
       experience_level
       department
     }
     hasCompletedIntake
   }
 }`);
-            console.log("All users:", JSON.stringify(data,null,2));
-            const suggestion = await suggestUserForTopic(JSON.stringify(data,null,2), message);
+            const allProfiles = data?.getAllUserProfiles || [];
+            const accessibleProfiles = filterAccessibleProfiles(
+              allProfiles.filter(
+                (profile) =>
+                  profile?.hasCompletedIntake &&
+                  profile?.session_id !== requesterSessionId
+              ),
+              requesterContext.classification_level
+            );
+
+            if (accessibleProfiles.length === 0) {
+              return buildAccessDeniedMessage(message);
+            }
+
+            console.log("Accessible users:", JSON.stringify(accessibleProfiles,null,2));
+            const suggestion = await suggestUserForTopic(JSON.stringify(accessibleProfiles,null,2), message);
             console.log("User suggestion:", suggestion);
             return suggestion;
             
         //This takes care of searching Google Drive
         } else if (intent.type === 'SEARCH_DRIVE' || intent.action === 'SEARCH_DRIVE') {
-            const searchResults = await searchDriveForTopic(intent.query);
+            const searchResults = await searchDriveForTopic(intent.query, requesterContext);
             return searchResults;
             
         } else {

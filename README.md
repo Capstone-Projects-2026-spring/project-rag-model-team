@@ -22,7 +22,7 @@ At a high level, the system should let a user ask project-related questions from
 
 ## Conceptual Design
 
-The project is built as a Node.js application using Slack Bolt for the bot interface. A GraphQL layer provides access to stored user and profile information, while a SQL.js-backed SQLite database stores user profiles and interaction-related data. For document retrieval, the bot can access JSON-based documentation stored in Google Drive through a service account. For answer generation and routing, the project uses LangChain prompt pipelines with a Groq-hosted LLM. Documentation for the project is maintained separately in a Docusaurus site.
+The project is built as a Node.js application using Slack Bolt for the bot interface. A GraphQL layer provides access to stored user and profile information, while a SQLite database stores user profiles and interaction-related data. For document retrieval, the bot can access JSON-based documentation stored in Google Drive through a service account. For answer generation and routing, the project uses LangChain prompt pipelines with a Groq-hosted LLM. Documentation for the project is maintained separately in a Docusaurus site.
 
 ## Background
 
@@ -135,13 +135,7 @@ GOOGLE_SERVICE_ACCOUNT_KEY_PATH=./service-account-key.json
 GOOGLE_DRIVE_FOLDER_ID=
 ```
 
-Start the supporting GraphQL service in one terminal:
-
-```bash
-node logic/graphql_setup/graphql_implementation.js
-```
-
-Start the Slack bot in a second terminal:
+Start the Slack bot and GraphQL service together:
 
 ```bash
 npm start
@@ -155,9 +149,9 @@ npm test
 
 Notes:
 
-- The main bot entry point is the root `index.js`, not `slack-bot/slack-bot.js`.
-- The GraphQL service should be running before testing user-profile questions.
-- Database initialization happens automatically when the backend/GraphQL layer starts.
+- The main bot entry point is the root `index.js`.
+- `npm start` launches both the Slack bot and the GraphQL server.
+- Database initialization happens automatically when the app starts.
 - If Google Drive credentials are missing, the bot can still start, but Drive-backed retrieval features will not work.
 
 ## Collaborators

@@ -22,6 +22,7 @@ export default buildSchema(`
     name: String
     email: String
     role: String
+    classification_level: String
     experience_level: String
     department: String
     areas_of_interest: String

@@ -1,11 +1,12 @@
 import { jest } from '@jest/globals';
 
 const mockAll = jest.fn();
+const mockOne = jest.fn();
 
 await jest.unstable_mockModule('../database/sqlite.js', () => ({
-  default: {
-    prepare: jest.fn(() => ({ all: mockAll })),
-  },
+  getAll: mockAll,
+  getOne: mockOne,
+  runQuery: jest.fn(),
 }));
 
 const { getAllUsers } = await import('./user.service.js');

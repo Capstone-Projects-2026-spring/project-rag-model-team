@@ -21,6 +21,7 @@
   },
   "homepage": "https://github.com/Capstone-Projects-2026-spring/project-rag-model-team#readme",
   "dependencies": {
+    "@langchain/core": "^1.1.36",
     "@langchain/groq": "^1.1.5",
     "@langchain/openai": "^1.3.0",
     "@openrouter/sdk": "^0.5.1",
@@ -30,13 +31,14 @@
     "concurrently": "^9.2.1",
     "cors": "^2.8.6",
     "dotenv": "^17.2.4",
+    "express": "^5.2.1",
     "express-graphql": "^0.12.0",
     "express-session": "^1.19.0",
     "googleapis": "^171.4.0",
+    "graphql": "^16.13.2",
     "graphql-request": "^7.4.0",
     "langchain": "^1.2.35",
-    "slack": "^11.0.2",
-    "sql.js": "^1.14.1"
+    "slack": "^11.0.2"
   },
   "devDependencies": {
     "@babel/core": "^7.29.0",
