@@ -122,7 +122,7 @@ app.event('app_mention', async ({ event, say }) => {
   // Remove bot mention from the message
   const question = event.text.replace(/<@[^>]+>/, '').trim(); 
   console.log("User asked a question:", question);
-  const responseText = await answerQuestion(question);
+  const responseText = await answerQuestion(question, event.user);
   await say({text: responseText});
 });
 

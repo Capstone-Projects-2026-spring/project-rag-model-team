@@ -139,9 +139,24 @@ const driveSearchChain = driveSearchPrompt.pipe(llm).pipe(new StringOutputParser
 const driveSearchSelectionChain = driveSearchSelectionPrompt.pipe(llm).pipe(new StringOutputParser());
 
 //Main function to decide what to do with a message based on the parsed intent
-export async function answerQuestion(message){
+export async function answerQuestion(message_, userId){
     try {
-        const intent = await parseIntent(message);
+        const createMutation = `
+        mutation ($sessionID: String!, $interactionType: String!, $message: String!) {
+          createInteractionRecord(session_id: $sessionID, interactionType: $interactionType, message: $message) {
+            profile_id
+            interaction_type
+            message
+            created_at
+          }
+        }
+      `;
+        await queryGraphQL(createMutation, { 
+          sessionID: userId,
+          interactionType: "reactive",
+          message: message_
+        })
+        const intent = await parseIntent(message_);
         console.log("Parsed intent:", intent);
         
         //This takes care of all user information retrieval
@@ -162,7 +177,7 @@ export async function answerQuestion(message){
   }
 }`);
             console.log("All users:", JSON.stringify(data,null,2));
-            const suggestion = await suggestUserForTopic(JSON.stringify(data,null,2), message);
+            const suggestion = await suggestUserForTopic(JSON.stringify(data,null,2), message_);
             console.log("User suggestion:", suggestion);
             return suggestion;
             

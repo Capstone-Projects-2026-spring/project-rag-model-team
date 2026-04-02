@@ -4,14 +4,14 @@ export const root = {
   // Simple health check query
   health: () => ({ status: 'ok', message: 'Server is running' }),
   // Fetch all users
-  getAllUsers: () => getAll(`SELECT id, session_id, created_at FROM user_profiles`),
+  getAllUsers: async () => await getAll(`SELECT id, session_id, created_at FROM user_profiles`),
   // Fetch a user by ID
-  getUserByID: ({ id }) => getOne(`SELECT id, session_id, created_at FROM user_profiles WHERE id = ?`, [id]),
+  getUserByID: async ({ id }) => await getOne(`SELECT id, session_id, created_at FROM user_profiles WHERE id = ?`, [id]),
   // Fetch all user profiles with their associated user info
-  getAllUserProfiles: () => {
-    const profiles = getAll(`SELECT id, session_id, created_at FROM user_profiles`);
-    return profiles.map(profile => {
-      const userInfo = getOne(
+  getAllUserProfiles: async () => {
+    const profiles = await getAll(`SELECT id, session_id, created_at FROM user_profiles`);
+    return profiles.map(async profile => {
+      const userInfo = await getOne(
         `SELECT * FROM user_info WHERE profile_id = ?`,
         [profile.id]
       );
@@ -24,8 +24,8 @@ export const root = {
     });
   },
   // Fetch a user profile by session_id with associated user info
-  getUserProfile: ({ session_id }) => {
-    const profile = getOne(
+  getUserProfile: async ({ session_id }) => {
+    const profile = await getOne(
       `SELECT id, session_id, created_at FROM user_profiles WHERE session_id = ?`,
       [session_id]
     );
@@ -34,7 +34,7 @@ export const root = {
       return null;
     }
 
-    const userInfo = getOne(
+    const userInfo = await getOne(
       `SELECT * FROM user_info WHERE profile_id = ?`,
       [profile.id]
     );
@@ -47,18 +47,18 @@ export const root = {
     };
   },
   // Mutation for creating a new user profile along with user info
-  createUserProfile: ({ input }) => {
+  createUserProfile: async ({ input }) => {
     try {
       console.log('Creating user profile with input:', input);
       
       // First create the user profile
-      runQuery(
+      await runQuery(
         `INSERT INTO user_profiles (session_id) VALUES (?)`,
         [input.session_id]
       );
       
       // Get the created profile by session_id
-      const profile = getOne(
+      const profile = await getOne(
         `SELECT id, session_id, created_at FROM user_profiles WHERE session_id = ?`,
         [input.session_id]
       );
@@ -72,7 +72,7 @@ export const root = {
 
       // Then create the user info
       console.log('Creating user info for profile ID:', profileId);
-      const infoResult = runQuery(
+      const infoResult = await runQuery(
         `INSERT INTO user_info (
           profile_id, session_id, name, email, role, experience_level, department,
           areas_of_interest, technical_skills, learning_goals, preferred_content_complexity
@@ -94,7 +94,7 @@ export const root = {
       console.log('User info creation result:', infoResult);
 
       // Return the complete profile
-      const userInfo = getOne(
+      const userInfo = await getOne(
         `SELECT * FROM user_info WHERE profile_id = ?`,
         [profileId]
       );
@@ -102,7 +102,7 @@ export const root = {
 
       if (!userInfo) {
         // Clean up if userInfo wasn't created
-        runQuery(`DELETE FROM user_profiles WHERE id = ?`, [profileId]);
+        await runQuery(`DELETE FROM user_profiles WHERE id = ?`, [profileId]);
         throw new Error('Failed to create user info record');
       }
 
@@ -118,10 +118,10 @@ export const root = {
     }
   },
   // Mutation for updating an existing user profile and user info
-  updateUserProfile: ({ session_id, input }) => {
+  updateUserProfile: async ({ session_id, input }) => {
     try {
       // First get the user profile
-      const profile = getOne(
+      const profile = await getOne(
         `SELECT id, session_id, created_at FROM user_profiles WHERE session_id = ?`,
         [session_id]
       );
@@ -131,14 +131,14 @@ export const root = {
       }
 
       // Check if user_info exists
-      const existingInfo = getOne(
+      const existingInfo = await getOne(
         `SELECT id FROM user_info WHERE profile_id = ?`,
         [profile.id]
       );
 
       if (existingInfo) {
         // Update existing user_info
-        runQuery(
+        await runQuery(
           `UPDATE user_info SET
             name = ?, email = ?, role = ?, experience_level = ?, department = ?,
             areas_of_interest = ?, technical_skills = ?, learning_goals = ?, preferred_content_complexity = ?,
@@ -159,7 +159,7 @@ export const root = {
         );
       } else {
         // Create new user_info
-        runQuery(
+        await runQuery(
           `INSERT INTO user_info (
             profile_id, session_id, name, email, role, experience_level, department,
             areas_of_interest, technical_skills, learning_goals, preferred_content_complexity
@@ -181,7 +181,7 @@ export const root = {
       }
 
       // Return updated profile
-      const userInfo = getOne(
+      const userInfo = await getOne(
         `SELECT * FROM user_info WHERE profile_id = ?`,
         [profile.id]
       );
@@ -202,12 +202,12 @@ export const root = {
     }
   },
   // Mutation for removing a user profile and associated user info
-  removeUser: ({ id }) => {
-    runQuery(`DELETE FROM user_profiles WHERE id = ?`, [id]);
-    runQuery(`DELETE FROM user_info WHERE profile_id = ?`, [id]);
+  removeUser: async ({ id }) => {
+    await runQuery(`DELETE FROM user_profiles WHERE id = ?`, [id]);
+    await runQuery(`DELETE FROM user_info WHERE profile_id = ?`, [id]);
 
-    const check = getOne(`SELECT id FROM user_profiles WHERE id = ?`, [id]);
-    const secondCheck = getOne(`SELECT id FROM user_info WHERE profile_id = ?`, [id]);
+    const check = await getOne(`SELECT id FROM user_profiles WHERE id = ?`, [id]);
+    const secondCheck = await getOne(`SELECT id FROM user_info WHERE profile_id = ?`, [id]);
 
     if (!check && !secondCheck) {
       return true;  // row is gone, delete succeeded
@@ -216,10 +216,10 @@ export const root = {
     return false;   // row still exists, delete failed
   },
   // Mutation for creating a new interaction record (for tracking user interactions with content)
-  createRecord: ({ session_id, interactionType, contentId, contentTitle, metadata }) => {
+  createInteractionRecord: async ({ session_id, interactionType, message }) => {
     try {
       // Get the user profile by session_id
-      const profile = getOne(
+      const profile = await getOne(
         `SELECT id FROM user_profiles WHERE session_id = ?`,
         [session_id]
       );
@@ -229,23 +229,79 @@ export const root = {
       }
 
       // Insert the interaction record
-      runQuery(
-        `INSERT INTO user_interactions (profile_id, interaction_type, content_id, content_title, metadata)
-         VALUES (?, ?, ?, ?, ?)`,
+      await runQuery(
+        `INSERT INTO user_interactions (profile_id, interaction_type, message)
+         VALUES (?, ?, ?)`,
         [
           profile.id,
           interactionType,
-          contentId,
-          contentTitle,
-          JSON.stringify(metadata || {})
+          message
         ]
       );
 
-      return { success: true, message: 'Interaction tracked' };
+      const check = await getOne(
+        `SELECT * FROM user_interactions WHERE profile_id = ? AND interaction_type = ? AND message = ? ORDER BY created_at DESC LIMIT 1`,
+        [
+          profile.id,
+          interactionType,
+          message
+        ]
+      );
+
+      if(!check){
+        console.error('Error in createRecord:', error);
+        return null;
+      }
+
+      const profile_id = check.profile_id
+      const interaction_type_ = check.interaction_type
+      const message_ =  check.message
+      const created_at = check.created_at
+
+      return { profile_id: profile_id, interaction_type: interaction_type_, message: message_, created_at: created_at  };
     } catch (error) {
       console.error('Error in createRecord:', error);
       throw new Error(`Failed to create interaction record: ${error.message}`);
     }
-  }
+  },
+  getInteractionRecords: async ({ session_id }) => {
+    try {
+      // Get the user profile by session_id
+      const profile = await getOne(
+        `SELECT id FROM user_profiles WHERE session_id = ?`,
+        [session_id]
+      );
 
+      if (!profile) {
+        throw new Error(`User profile with session_id ${session_id} not found`);
+      }
+
+      // Fetch interaction records for the profile
+      const interactions = await getAll(
+        `SELECT id, interaction_type, message, created_at, profile_id
+         FROM user_interactions
+         WHERE profile_id = ?`,
+        [profile.id]
+      );
+
+      return interactions;
+    } catch (error) {
+      console.error('Error in getInteractionRecords:', error);
+      throw new Error(`Failed to fetch interaction records: ${error.message}`);
+    }
+  },
+  getAllInteractionRecords: async () => {
+    return await getAll(`SELECT * FROM user_interactions`);
+  },
+  removeInteractionRecord: async ({ id }) => {
+    await runQuery(`DELETE FROM user_interactions WHERE id = ?`, [id]);
+
+    const check = await getOne(`SELECT id FROM user_interactions WHERE id = ?`, [id]);
+
+    if (!check) {
+      return true;  // row is gone, delete succeeded
+    }
+
+    return false;   // row still exists, delete failed
+  }
 };
