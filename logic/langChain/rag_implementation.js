@@ -328,15 +328,24 @@ const driveSearchSelectionChain = driveSearchSelectionPrompt.pipe(llm).pipe(new 
 const autoClassifyChain = autoClassifyPrompt.pipe(llm).pipe(new StringOutputParser());
 
 //Main function to decide what to do with a message based on the parsed intent
-export async function answerQuestion(message, requesterSessionId = null){
+export async function answerQuestion(message_, userId){
     try {
-        const requesterContext = await getRequesterAccessContext(requesterSessionId);
-
-        if (isGreetingMessage(message)) {
-            return buildGreetingResponse(requesterContext);
+        const createMutation = `
+        mutation ($sessionID: String!, $interactionType: String!, $message: String!) {
+          createInteractionRecord(session_id: $sessionID, interactionType: $interactionType, message: $message) {
+            profile_id
+            interaction_type
+            message
+            created_at
+          }
         }
-
-        const intent = await parseIntent(message);
+      `;
+        await queryGraphQL(createMutation, { 
+          sessionID: userId,
+          interactionType: "reactive",
+          message: message_
+        })
+        const intent = await parseIntent(message_);
         console.log("Parsed intent:", intent);
 
         //This takes care of all user information retrieval
@@ -357,22 +366,8 @@ export async function answerQuestion(message, requesterSessionId = null){
     hasCompletedIntake
   }
 }`);
-            const allProfiles = data?.getAllUserProfiles || [];
-            const accessibleProfiles = filterAccessibleProfiles(
-              allProfiles.filter(
-                (profile) =>
-                  profile?.hasCompletedIntake &&
-                  profile?.session_id !== requesterSessionId
-              ),
-              requesterContext.classification_level
-            );
-
-            if (accessibleProfiles.length === 0) {
-              return buildAccessDeniedMessage(message);
-            }
-
-            console.log("Accessible users:", JSON.stringify(accessibleProfiles,null,2));
-            const suggestion = await suggestUserForTopic(JSON.stringify(accessibleProfiles,null,2), message);
+            console.log("All users:", JSON.stringify(data,null,2));
+            const suggestion = await suggestUserForTopic(JSON.stringify(data,null,2), message_);
             console.log("User suggestion:", suggestion);
             return suggestion;
 

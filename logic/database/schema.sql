@@ -29,12 +29,10 @@ CREATE TABLE IF NOT EXISTS user_info (
 -- User Interactions Table (for tracking what content they've accessed)
 CREATE TABLE IF NOT EXISTS user_interactions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    profile_id INTEGER NOT NULL,
-    interaction_type TEXT NOT NULL, -- e.g., 'page_view', 'search', 'feedback'
-    content_id TEXT,
-    content_title TEXT,
+    profile_id INTEGER NOT NULL, -- Links to user_profiles
+    interaction_type TEXT NOT NULL, -- e.g., 'preemptive', 'reactive'
+    message TEXT NOT NULL, -- The content they interacted with
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    metadata TEXT, -- JSON as TEXT for additional context
     FOREIGN KEY (profile_id) REFERENCES user_profiles(id) ON DELETE CASCADE
 );
 

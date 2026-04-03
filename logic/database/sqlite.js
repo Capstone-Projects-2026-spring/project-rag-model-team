@@ -84,14 +84,16 @@ function runMigrations() {
     console.error('Migration failed:', error.message);
   }
 }
-export function getOne(sql, params = []) {
-  return db.prepare(sql).get(...params);
+
+// Helper functions for database operations
+export async function getOne(sql, params = []) {
+  return await db.prepare(sql).get(...params);
 }
 
-export function getAll(sql, params = []) {
-  return db.prepare(sql).all(...params);
+export async function getAll(sql, params = []) {
+  return await db.prepare(sql).all(...params);
 }
 
-export function runQuery(sql, params = []) {
-  return db.prepare(sql).run(...params);
+export async function runQuery(sql, params = []) {
+  return await db.prepare(sql).run(...params);
 }

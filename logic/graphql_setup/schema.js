@@ -55,18 +55,15 @@ export default buildSchema(`
     getAllUserProfiles: [Profile]
     getUserByID(id: ID!): User
     getUserProfile(session_id: String!): Profile
-    getAllDocumentTags: [DocumentTag]
-    getDocumentTags(drive_file_id: String!): DocumentTag
-    getDocumentsByTag(tag: String!): [DocumentTag]
+    getInteractionRecords(session_id: String!): [Interaction]
+    getAllInteractionRecords: [Interaction]
   }
 
   type Interaction {
     id: ID!
     profile_id: ID
     interaction_type: String
-    content_id: String
-    content_title: String
-    metadata: String
+    message: String
     created_at: String
   }
 
@@ -75,10 +72,8 @@ export default buildSchema(`
     createUserProfile(input: UserProfileInput!): Profile
     updateUserProfile(session_id: String!, input: UserProfileInput!): Profile
     removeUser(id: ID!): Boolean
-    createInteraction(session_id: String!, interactionType: String!, contentId: String!, contentTitle: String!, metadata: String): Boolean
-    setDocumentTags(drive_file_id: String!, file_name: String!, classification_level: String, tags: String!): DocumentTag
-    addTagToDocument(drive_file_id: String!, tag: String!): DocumentTag
-    removeTagFromDocument(drive_file_id: String!, tag: String!): DocumentTag
+    createInteractionRecord(session_id: String!, interactionType: String!, message: String!): Interaction
+    removeInteractionRecord(id: ID!): Boolean
   }
 
   input UserProfileInput {

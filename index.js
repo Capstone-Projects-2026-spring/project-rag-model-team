@@ -204,7 +204,7 @@ app.event("app_mention", async ({ event, say, client }) => {
   const question = event.text.replace(/<@[^>]+>/, "").trim();
   console.log("User asked a question:", question);
   const responseText = await answerQuestion(question, event.user);
-  await say({ text: responseText });
+  await say({text: responseText});
 });
 
 // ============= DM Handler =============
