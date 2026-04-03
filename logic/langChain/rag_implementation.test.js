@@ -25,7 +25,7 @@ function getChainHandler(template) {
     return chainHandlers.userInfo;
   }
 
-  if (template.includes("suggest relevant documents from our Google Drive")) {
+  if (template.includes("suggest ONLY documents that are directly relevant")) {
     return chainHandlers.driveSearch;
   }
 
