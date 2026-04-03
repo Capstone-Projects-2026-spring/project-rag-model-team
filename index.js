@@ -220,8 +220,22 @@ app.event("app_mention", async ({ event, say, client }) => {
   const question = event.text.replace(/<@[^>]+>/, "").trim();
   console.log("User asked a question:", question);
   logInteraction(event.user, question);
-  const responseText = await answerQuestion(question, event.user);
-  await say({text: responseText});
+  const response = await answerQuestion(question, event.user);
+
+  if (typeof response === 'string') {
+    await say({ text: response });
+  } else {
+    let messageText = response.answer;
+
+    if (response.followUpQuestions && response.followUpQuestions.length > 0) {
+      messageText += "\n\n💡 *You might also want to ask:*\n";
+      response.followUpQuestions.forEach((question, index) => {
+        messageText += `${index + 1}. ${question}\n`;
+      });
+    }
+
+    await say({ text: messageText });
+  }
 });
 
 // ============= DM Handler =============
@@ -247,8 +261,22 @@ app.event("message", async ({ event, say }) => {
 
     // Profile exists — answer the question directly (no @ needed in DMs)
     logInteraction(userId, event.text);
-    const responseText = await answerQuestion(event.text, userId);
-    await say({ text: responseText });
+    const response = await answerQuestion(event.text, userId);
+
+    if (typeof response === 'string') {
+      await say({ text: response });
+    } else {
+      let messageText = response.answer;
+
+      if (response.followUpQuestions && response.followUpQuestions.length > 0) {
+        messageText += "\n\n💡 *You might also want to ask:*\n";
+        response.followUpQuestions.forEach((question, index) => {
+          messageText += `${index + 1}. ${question}\n`;
+        });
+      }
+
+      await say({ text: messageText });
+    }
   } catch (error) {
     console.error("Error handling DM:", error);
     await say("Sorry, I encountered an error. Please try again.");

@@ -106,6 +106,26 @@ function stripCodeFences(str) {
   return str.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
 }
 
+//JSON ONLY
+const followUpQuestionsPrompt = PromptTemplate.fromTemplate(`
+    Based on the user's original question and the answer provided, generate 3-5 relevant follow-up questions that would help the user explore related topics or dive deeper into the subject.
+
+    Original Question: {originalQuestion}
+    Answer Provided: {answer}
+    Intent Type: {intentType}
+
+    Guidelines:
+    - Generate questions that are natural extensions of the conversation
+    - Make questions specific and actionable
+    - Ensure diversity - don't ask similar questions in different ways
+    - For user-related queries, suggest questions about other team members or roles
+    - For document queries, suggest questions about related topics or deeper aspects
+    - Questions should be concise and clear (under 15 words each)
+    
+    Return ONLY a JSON array of question strings with no explanation, for example:
+    ["Question 1 here?", "Question 2 here?", "Question 3 here?"]
+`);
+
 //Functions to call the chains and decide what to do with the results
 
 async function parseIntent(message) {
@@ -325,12 +345,41 @@ async function searchDriveForTopic(topic, requesterContext) {
   }
 }
 
+async function generateFollowUpQuestions(originalQuestion, answer, intentType) {
+  try {
+    console.log("Generating follow-up questions for:", originalQuestion);
+    const result = await followUpQuestionsChain.invoke({ 
+      originalQuestion, 
+      answer, 
+      intentType 
+    });
+    console.log("Raw follow-up questions result:", result);
+    
+    try {
+      const questions = JSON.parse(result);
+      if (Array.isArray(questions) && questions.length > 0) {
+        // Limit to 5 questions max
+        return questions.slice(0, 5);
+      }
+      console.warn("Follow-up questions not in expected format, returning empty array");
+      return [];
+    } catch (jsonError) {
+      console.error("Error parsing follow-up questions JSON:", jsonError);
+      return [];
+    }
+  } catch (error) {
+    console.error("Error generating follow-up questions:", error);
+    return [];
+  }
+}
+
 //Chains for llm interactions
 const intentChain = intentPrompt.pipe(llm).pipe(new StringOutputParser());
 const userInfoChain = userInformationPrompt.pipe(llm).pipe(new StringOutputParser());
 const driveSearchChain = driveSearchPrompt.pipe(llm).pipe(new StringOutputParser());
 const driveSearchSelectionChain = driveSearchSelectionPrompt.pipe(llm).pipe(new StringOutputParser());
 const autoClassifyChain = autoClassifyPrompt.pipe(llm).pipe(new StringOutputParser());
+const followUpQuestionsChain = followUpQuestionsPrompt.pipe(llm).pipe(new StringOutputParser());
 
 //Main function to decide what to do with a message based on the parsed intent
 export async function answerQuestion(message, requesterSessionId = null){
@@ -343,7 +392,10 @@ export async function answerQuestion(message, requesterSessionId = null){
 
         const intent = await parseIntent(message);
         console.log("Parsed intent:", intent);
-
+        
+        let answer = "";
+        let intentType = "";
+        
         //This takes care of all user information retrieval
         if (intent.type === 'GET_USER' || intent.action === 'GET_USER') {
             const data = await queryGraphQL(`{
@@ -372,24 +424,37 @@ export async function answerQuestion(message, requesterSessionId = null){
             );
 
             if (accessibleProfiles.length === 0) {
-              return buildAccessDeniedMessage(message);
+              answer = buildAccessDeniedMessage(message);
+            } else {
+              console.log("Accessible users:", JSON.stringify(accessibleProfiles,null,2));
+              answer = await suggestUserForTopic(JSON.stringify(accessibleProfiles,null,2), message);
+              console.log("User suggestion:", answer);
             }
-
-            console.log("Accessible users:", JSON.stringify(accessibleProfiles,null,2));
-            const suggestion = await suggestUserForTopic(JSON.stringify(accessibleProfiles,null,2), message);
-            console.log("User suggestion:", suggestion);
-            return suggestion;
+            intentType = "GET_USER";
 
         //This takes care of searching Google Drive
         } else if (intent.type === 'SEARCH_DRIVE' || intent.action === 'SEARCH_DRIVE') {
-            const searchResults = await searchDriveForTopic(intent.query, requesterContext);
-            return searchResults;
-
+            answer = await searchDriveForTopic(intent.query, requesterContext);
+            intentType = "SEARCH_DRIVE";
+            
         } else {
-            return "Sorry, there is no documentation available for that topic and cannot reliably give you information. Please ask about a different topic or try rephrasing your question.";
+            answer = "Sorry, there is no documentation available for that topic and cannot reliably give you information. Please ask about a different topic or try rephrasing your question.";
+            intentType = "GENERAL";
         }
+        
+        // Generate follow-up questions
+        const followUpQuestions = await generateFollowUpQuestions(message, answer, intentType);
+        
+        // Return object with both answer and follow-up questions
+        return {
+            answer,
+            followUpQuestions
+        };
     } catch (error) {
         console.error("Error in answerQuestion:", error);
-        return "Sorry, I couldn't understand your question. Please try rephrasing it.";
+        return {
+            answer: "Sorry, I couldn't understand your question. Please try rephrasing it.",
+            followUpQuestions: []
+        };
     }
 }
