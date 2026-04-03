@@ -123,7 +123,31 @@ app.event('app_mention', async ({ event, say }) => {
   const question = event.text.replace(/<@[^>]+>/, '').trim(); 
   console.log("User asked a question:", question);
   const responseText = await answerQuestion(question, event.user);
-  await say({text: responseText});
+  await say({
+    text: responseText,
+    blocks: [
+      { type: "section", text: { type: "mrkdwn", text: responseText } },
+      {
+        type: "actions",
+        elements: [
+          {
+            type: "button",
+            text: { type: "plain_text", text: "Yes" },
+            style: "primary",
+            value: JSON.stringify({ user: event.user, question, responseText, feedback: "yes" }),
+            action_id: "feedback_yes"
+          },
+          {
+            type: "button",
+            text: { type: "plain_text", text: "No" },
+            style: "danger",
+            value: JSON.stringify({ user: event.user, question, responseText, feedback: "no" }),
+            action_id: "feedback_no"
+          }
+        ]
+      }
+    ]
+  });
 });
 
 // ============= DM Intake Handler =============
@@ -132,7 +156,8 @@ app.event('message', async ({ event, say }) => {
   //Checks that the message is an IM
   if (event.channel_type !== 'im' || event.bot_id) return;
   const userId = event.user;
-  console.log(`💬 DM from ${userId}`);
+  const text = event.text?.trim();
+  console.log(`💬 DM from ${userId}: ${text}`);
   try {
     const profile = db.prepare('SELECT * FROM user_profiles WHERE session_id = ?').get(userId);
     //If there is no profile in the database for this user, prompt them to complete the intake form. If there is a profile, welcome them back and let them know they can ask questions in channels.
@@ -159,9 +184,67 @@ app.event('message', async ({ event, say }) => {
           }
         ]
       });
-    } else {
-      await say("✅ Your profile is already set up! Ask me questions by mentioning me in a channel.");
+      return;
     }
+    // If the user has a profile and sends a message, answer their question
+    if (text) {
+      const responseText = await answerQuestion(text, userId);
+      await say({
+        text: responseText,
+        blocks: [
+          { type: "section", text: { type: "mrkdwn", text: responseText } },
+          {
+            type: "actions",
+            elements: [
+              {
+                type: "button",
+                text: { type: "plain_text", text: "Yes" },
+                style: "primary",
+                value: JSON.stringify({ user: userId, question: text, responseText, feedback: "yes" }),
+                action_id: "feedback_yes"
+              },
+              {
+                type: "button",
+                text: { type: "plain_text", text: "No" },
+                style: "danger",
+                value: JSON.stringify({ user: userId, question: text, responseText, feedback: "no" }),
+                action_id: "feedback_no"
+              }
+            ]
+          }
+        ]
+      });
+    } else {
+      await say("✅ Your profile is already set up! Ask me a question, and I'll do my best to help.");
+    }
+  // ============= Feedback Handlers =============
+
+  app.action(/feedback_(yes|no)/, async ({ ack, body, action, client }) => {
+    await ack();
+    let feedbackData;
+    try {
+      feedbackData = JSON.parse(action.value);
+    } catch (e) {
+      feedbackData = { user: body.user.id, feedback: action.action_id === 'feedback_yes' ? 'yes' : 'no' };
+    }
+    // Store feedback (for demo, just log it; replace with DB/store as needed)
+    console.log('Feedback received:', feedbackData);
+    // Optionally, update the message to thank the user
+    await client.chat.update({
+      channel: body.channel.id,
+      ts: body.message.ts,
+      text: body.message.text,
+      blocks: [
+        ...(body.message.blocks?.filter(b => b.type !== 'actions') || []),
+        {
+          type: 'context',
+          elements: [
+            { type: 'mrkdwn', text: `:white_check_mark: Thank you for your feedback!` }
+          ]
+        }
+      ]
+    });
+  });
   } catch (error) {
     console.error('Error handling DM:', error);
     await say("Sorry, I encountered an error. Please try again.");
