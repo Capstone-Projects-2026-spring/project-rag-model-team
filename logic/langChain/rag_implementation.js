@@ -328,29 +328,19 @@ const driveSearchSelectionChain = driveSearchSelectionPrompt.pipe(llm).pipe(new 
 const autoClassifyChain = autoClassifyPrompt.pipe(llm).pipe(new StringOutputParser());
 
 //Main function to decide what to do with a message based on the parsed intent
-export async function answerQuestion(message_, userId){
+export async function answerQuestion(message, requesterSessionId = null){
     try {
-        const createMutation = `
-        mutation ($sessionID: String!, $interactionType: String!, $message: String!) {
-          createInteractionRecord(session_id: $sessionID, interactionType: $interactionType, message: $message) {
-            profile_id
-            interaction_type
-            message
-            created_at
-          }
+        const requesterContext = await getRequesterAccessContext(requesterSessionId);
+
+        if (isGreetingMessage(message)) {
+            return buildGreetingResponse(requesterContext);
         }
-      `;
-        await queryGraphQL(createMutation, { 
-          sessionID: userId,
-          interactionType: "reactive",
-          message: message_
-        })
-        const intent = await parseIntent(message_);
+
+        const intent = await parseIntent(message);
         console.log("Parsed intent:", intent);
 
         //This takes care of all user information retrieval
         if (intent.type === 'GET_USER' || intent.action === 'GET_USER') {
-            //Client side request for the list of all users, which we can then use to suggest who might be helpful for a question on a certain topic
             const data = await queryGraphQL(`{
   getAllUserProfiles {
     id
@@ -366,8 +356,22 @@ export async function answerQuestion(message_, userId){
     hasCompletedIntake
   }
 }`);
-            console.log("All users:", JSON.stringify(data,null,2));
-            const suggestion = await suggestUserForTopic(JSON.stringify(data,null,2), message_);
+            const allProfiles = data?.getAllUserProfiles || [];
+            const accessibleProfiles = filterAccessibleProfiles(
+              allProfiles.filter(
+                (profile) =>
+                  profile?.hasCompletedIntake &&
+                  profile?.session_id !== requesterSessionId
+              ),
+              requesterContext.classification_level
+            );
+
+            if (accessibleProfiles.length === 0) {
+              return buildAccessDeniedMessage(message);
+            }
+
+            console.log("Accessible users:", JSON.stringify(accessibleProfiles,null,2));
+            const suggestion = await suggestUserForTopic(JSON.stringify(accessibleProfiles,null,2), message);
             console.log("User suggestion:", suggestion);
             return suggestion;
 

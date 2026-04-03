@@ -24,6 +24,22 @@ slackHandlers(app);
 
 // ================ Helper functions =====================
 
+const interactionLogMutation = `
+  mutation ($sessionID: String!, $interactionType: String!, $message: String!) {
+    createInteractionRecord(session_id: $sessionID, interactionType: $interactionType, message: $message) {
+      profile_id
+      interaction_type
+      message
+      created_at
+    }
+  }
+`;
+
+function logInteraction(userId, message) {
+  queryGraphQL(interactionLogMutation, { sessionID: userId, interactionType: "reactive", message })
+    .catch(err => console.warn("Interaction logging failed:", err.message));
+}
+
 async function fetchUserProfile(sessionId) {
   const query = `
     query ($session_id: String!) {
@@ -203,6 +219,7 @@ app.event("app_mention", async ({ event, say, client }) => {
 
   const question = event.text.replace(/<@[^>]+>/, "").trim();
   console.log("User asked a question:", question);
+  logInteraction(event.user, question);
   const responseText = await answerQuestion(question, event.user);
   await say({text: responseText});
 });
@@ -229,6 +246,7 @@ app.event("message", async ({ event, say }) => {
     }
 
     // Profile exists — answer the question directly (no @ needed in DMs)
+    logInteraction(userId, event.text);
     const responseText = await answerQuestion(event.text, userId);
     await say({ text: responseText });
   } catch (error) {
