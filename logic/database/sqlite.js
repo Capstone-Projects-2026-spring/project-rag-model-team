@@ -61,6 +61,14 @@ function runMigrations() {
       console.log('Migration completed: classification_level column added');
     }
 
+    const interactionColumns = db.pragma('table_info(user_interactions)');
+    const hasMessageColumn = interactionColumns.some((col) => col.name === 'message');
+    if (!hasMessageColumn) {
+      console.log('Adding message column to user_interactions table...');
+      db.prepare("ALTER TABLE user_interactions ADD COLUMN message TEXT NOT NULL DEFAULT ''").run();
+      console.log('Migration completed: message column added to user_interactions');
+    }
+
     const docTagsExists = tables.some((t) => t.name === 'document_tags');
     if (!docTagsExists) {
       console.log('Creating document_tags table...');
@@ -86,14 +94,14 @@ function runMigrations() {
 }
 
 // Helper functions for database operations
-export async function getOne(sql, params = []) {
-  return await db.prepare(sql).get(...params);
+export function getOne(sql, params = []) {
+  return db.prepare(sql).get(...params);
 }
 
-export async function getAll(sql, params = []) {
-  return await db.prepare(sql).all(...params);
+export function getAll(sql, params = []) {
+  return db.prepare(sql).all(...params);
 }
 
-export async function runQuery(sql, params = []) {
-  return await db.prepare(sql).run(...params);
+export function runQuery(sql, params = []) {
+  return db.prepare(sql).run(...params);
 }
