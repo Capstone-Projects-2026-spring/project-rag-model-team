@@ -14,6 +14,7 @@ const chainHandlers = {
   driveSearch: jest.fn(),
   driveSelection: jest.fn(),
   autoClassify: jest.fn(),
+  followUpQuestions: jest.fn(),
 };
 
 function getChainHandler(template) {
@@ -35,6 +36,10 @@ function getChainHandler(template) {
 
   if (template.includes("classifying a document for a software team")) {
     return chainHandlers.autoClassify;
+  }
+
+  if (template.includes("generate 3-5 relevant follow-up questions")) {
+    return chainHandlers.followUpQuestions;
   }
 
   throw new Error(`Unknown prompt template: ${template}`);
@@ -121,6 +126,7 @@ describe("answerQuestion access filtering", () => {
       '{"type":"GET_USER","action":"GET_ALL"}',
     );
     chainHandlers.userInfo.mockResolvedValue("Talk to Alex.");
+    chainHandlers.followUpQuestions.mockResolvedValue('[]');
 
     mockQueryGraphQL
       .mockResolvedValueOnce({
@@ -175,7 +181,8 @@ describe("answerQuestion access filtering", () => {
       "U_REQUESTER",
     );
 
-    expect(response).toBe("Talk to Alex.");
+    expect(response.answer).toBe("Talk to Alex.");
+    expect(response.followUpQuestions).toEqual([]);
     expect(chainHandlers.userInfo).toHaveBeenCalledTimes(1);
 
     const [{ userInfo }] = chainHandlers.userInfo.mock.calls[0];
@@ -195,6 +202,7 @@ describe("answerQuestion access filtering", () => {
     chainHandlers.driveSelection.mockResolvedValue(
       "Architecture guide summary",
     );
+    chainHandlers.followUpQuestions.mockResolvedValue('[]');
 
     mockQueryGraphQL.mockResolvedValueOnce({
       getUserProfile: {
@@ -228,7 +236,8 @@ describe("answerQuestion access filtering", () => {
       "U_REQUESTER",
     );
 
-    expect(response).toBe("Architecture guide summary");
+    expect(response.answer).toBe("Architecture guide summary");
+    expect(response.followUpQuestions).toEqual([]);
     expect(chainHandlers.driveSearch).toHaveBeenCalledTimes(1);
 
     const [{ files }] = chainHandlers.driveSearch.mock.calls[0];
@@ -248,6 +257,7 @@ describe("answerQuestion access filtering", () => {
     chainHandlers.driveSearch.mockResolvedValue(
       '[{"id":"doc-restricted","name":"board-roadmap.json"}]',
     );
+    chainHandlers.followUpQuestions.mockResolvedValue('[]');
 
     mockQueryGraphQL.mockResolvedValueOnce({
       getUserProfile: {
@@ -274,7 +284,8 @@ describe("answerQuestion access filtering", () => {
 
     const response = await answerQuestion("Show me the roadmap", "U_REQUESTER");
 
-    expect(response).toContain("does not allow me to share");
+    expect(response.answer).toContain("does not allow me to share");
+    expect(response.followUpQuestions).toEqual([]);
     expect(mockGetFile).not.toHaveBeenCalled();
     expect(chainHandlers.driveSelection).not.toHaveBeenCalled();
   });
