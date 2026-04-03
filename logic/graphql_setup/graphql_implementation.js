@@ -7,21 +7,22 @@ import { initDatabase } from '../database/sqlite.js';
 
 const app = express();
 
-// Initialize database before starting GraphQL server
-try {
-  initDatabase();
-  console.log('✅ GraphQL database initialized');
+export function startGraphQL() {
+  try {
+    initDatabase();
+    console.log('✅ GraphQL database initialized');
 
-  app.use('/graphql', graphqlHTTP({
-    schema,
-    rootValue: root,
-    graphiql: true
-  }));
+    app.use('/graphql', graphqlHTTP({
+      schema,
+      rootValue: root,
+      graphiql: true
+    }));
 
-  app.listen(4000, () => console.log('GraphQL running on http://localhost:4000/graphql'));
-} catch (error) {
-  console.error('❌ Failed to initialize GraphQL database:', error);
-  process.exit(1);
+    app.listen(4000, () => console.log('GraphQL running on http://localhost:4000/graphql'));
+  } catch (error) {
+    console.error('❌ Failed to initialize GraphQL database:', error);
+    process.exit(1);
+  }
 }
 
 export default app;

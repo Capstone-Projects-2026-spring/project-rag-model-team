@@ -6,10 +6,16 @@ import {listFiles, getFile} from '../../google_api/driveService.js';
 import { queryGraphQL } from '../graphql_setup/graphql_client.js';
 import {
   buildAccessDeniedMessage,
-  filterAccessibleFiles,
+  annotateFilesWithClassification,
+  canAccessClassification,
   filterAccessibleProfiles,
-  getClassificationForRole
+  getClassificationForRole,
+  normalizeClassification,
 } from '../security/access_control.js';
+import {
+  upsertDocumentTags,
+  getDocumentTags,
+} from '../database/documentTagService.js';
 
 dotenv.config();
 
@@ -55,10 +61,17 @@ const userInformationPrompt = PromptTemplate.fromTemplate(`
 
 //JSON ONLY
 const driveSearchPrompt = PromptTemplate.fromTemplate(`
-    Given the following search query, can you suggest relevant documents from our Google Drive that may be helpful to answer a question about {topic}?
+    Given the following search query, suggest ONLY documents that are directly relevant to the topic "{topic}".
     Files in our drive: {files}
-    Please return the files you want to suggest in a JSON array with the format: [{{"id": "file.id", "name": "file.name"}}] If you don't have enough information to make a suggestion, return an empty array.
-    Please only use JSON, no explanation.
+    Each file includes: id, name, classification_level, and tags (topic labels).
+
+    Rules:
+    - Only include a file if its name or tags clearly match the topic.
+    - Do NOT suggest a file just because nothing else is available.
+    - If no file is a clear match, return an empty array.
+
+    Return a JSON array with the format: [{{"id": "file.id", "name": "file.name"}}]
+    JSON only, no explanation.
 `);
 
 //Natural Language
@@ -67,6 +80,25 @@ const driveSearchSelectionPrompt = PromptTemplate.fromTemplate(`
     If the question is asking about what information you do have, it is okay to list out a few file names that could help the user make further questions.
     Document contents: {content}
     Please answer the question about {topic} using only the information from these documents. If you don't have enough information to answer, say "IDK" and only "IDK".
+`);
+
+//JSON ONLY — used to auto-classify documents with no existing metadata tags
+const autoClassifyPrompt = PromptTemplate.fromTemplate(`
+  You are classifying a document for a software team knowledge base.
+  File name: {name}
+  Content excerpt (first 500 characters): {excerpt}
+
+  Return JSON only with this exact format:
+  {{"classification_level": "public|internal|confidential|restricted", "tags": ["tag1", "tag2"]}}
+
+  classification_level rules:
+  - public: general info anyone can see
+  - internal: standard team docs (default)
+  - confidential: senior/technical design docs
+  - restricted: management or strategic docs
+
+  tags: up to 5 lowercase topic labels (e.g. "onboarding", "backend", "api", "architecture", "testing")
+  JSON only, no explanation.
 `);
 
 //Functions to call the chains and decide what to do with the results
@@ -157,41 +189,94 @@ async function getRequesterAccessContext(requesterSessionId) {
   }
 }
 
+/**
+ * Uses the LLM to classify a Drive file and assign topic tags.
+ * Accepts an optional `_content` string to avoid re-fetching the file.
+ * Falls back to 'internal' classification with no tags on failure.
+ */
+export async function autoClassifyDocument(file) {
+  try {
+    let excerpt;
+    if (file._content) {
+      excerpt = file._content.slice(0, 500);
+    } else {
+      const stream = await getFile(file.id);
+      const fullContent = await streamToString(stream);
+      excerpt = fullContent.slice(0, 500);
+    }
+    const result = await autoClassifyChain.invoke({ name: file.name, excerpt: excerpt });
+    const parsed = JSON.parse(result);
+    return {
+      classification_level: normalizeClassification(parsed.classification_level),
+      tags: Array.isArray(parsed.tags) ? parsed.tags.map(t => String(t).toLowerCase()) : [],
+    };
+  } catch (error) {
+    console.warn(`Auto-classify failed for "${file.name}":`, error.message);
+    return { classification_level: 'internal', tags: [] };
+  }
+}
+
+/**
+ * Enriches an annotated file list with DB-cached or Drive-metadata tags.
+ * Files with no tags anywhere get empty tags for now — auto-classification
+ * happens lazily only for files actually selected for answering.
+ */
+function enrichFilesWithTags(annotatedFiles) {
+  return annotatedFiles.map((file) => {
+    const cached = getDocumentTags(file.id);
+    if (cached) {
+      return {
+        ...file,
+        classification_level: cached.classification_level,
+        tags: cached.tags,
+      };
+    }
+    if (file.tags.length > 0) {
+      upsertDocumentTags(file.id, file.name, file.classification_level, file.tags, false);
+    }
+    return file;
+  });
+}
+
 async function searchDriveForTopic(topic, requesterContext) {
   const files = await listFiles();
-  const accessibleFiles = filterAccessibleFiles(
-    files,
-    requesterContext.classification_level
+  // Annotate with Drive metadata first, then override with DB values (DB takes priority)
+  const annotated = annotateFilesWithClassification(files);
+  const enriched = enrichFilesWithTags(annotated);
+  // Filter using the final classification (DB-overridden values)
+  const enrichedFiles = enriched.filter((file) =>
+    canAccessClassification(requesterContext.classification_level, file.classification_level)
   );
 
-  if (accessibleFiles.length === 0) {
+  if (enrichedFiles.length === 0) {
     return buildAccessDeniedMessage(topic);
   }
 
   const fileSuggestionsString = await driveSearchChain.invoke({
-    files: JSON.stringify(accessibleFiles),
+    files: JSON.stringify(enrichedFiles.map(f => ({
+      id: f.id,
+      name: f.name,
+      classification_level: f.classification_level,
+      tags: f.tags,
+    }))),
     topic
   });
-  //console.log("Suggested Files (raw):", fileSuggestionsString);
-  
+
   let fileSuggestions;
   try {
     fileSuggestions = JSON.parse(fileSuggestionsString);
-    //console.log("Suggested Files (parsed):", fileSuggestions);
   } catch (error) {
     console.error("Error parsing file suggestions JSON:", error);
     return "Sorry, I couldn't find relevant information in our documents.";
   }
-  
+
   if (!Array.isArray(fileSuggestions) || fileSuggestions.length === 0) {
     return "Sorry, I couldn't find relevant information in our documents.";
   }
 
-  const accessibleFilesById = new Map(
-    accessibleFiles.map(file => [file.id, file])
-  );
+  const enrichedFilesById = new Map(enrichedFiles.map(file => [file.id, file]));
   const authorizedSuggestions = fileSuggestions
-    .map(file => accessibleFilesById.get(file.id))
+    .map(file => enrichedFilesById.get(file.id))
     .filter(Boolean);
 
   if (authorizedSuggestions.length === 0) {
@@ -203,7 +288,15 @@ async function searchDriveForTopic(topic, requesterContext) {
         try {
           const stream = await getFile(file.id);
           const content = await streamToString(stream);
-          return `File: ${file.name}\nClassification: ${file.classification_level}\n\n${content}`;
+
+          // Auto-classify selected files that have no tags yet, caching for future queries
+          if (!getDocumentTags(file.id)) {
+            console.log(`Auto-classifying "${file.name}"...`);
+            const { classification_level, tags } = await autoClassifyDocument({ ...file, _content: content });
+            upsertDocumentTags(file.id, file.name, classification_level, tags, true);
+          }
+
+          return `File: ${file.name}\nClassification: ${file.classification_level}\nTags: ${file.tags.join(', ')}\n\n${content}`;
         } catch (error) {
           console.error(`Error reading file ${file.id}:`, error);
           return `Error reading file: ${error.message}`;
@@ -217,11 +310,11 @@ async function searchDriveForTopic(topic, requesterContext) {
         } else {
             return finalAnswer;
         }
-    } catch (error) {      
+    } catch (error) {
         console.error("Error invoking driveSearchSelectionChain:", error);
         return "Sorry, I couldn't process the information from the documents.";
     }
-  } catch (error) {    
+  } catch (error) {
     console.error("Error retrieving file contents:", error);
     return "Sorry, I couldn't retrieve the documents from our drive.";
   }
@@ -232,6 +325,7 @@ const intentChain = intentPrompt.pipe(llm).pipe(new StringOutputParser());
 const userInfoChain = userInformationPrompt.pipe(llm).pipe(new StringOutputParser());
 const driveSearchChain = driveSearchPrompt.pipe(llm).pipe(new StringOutputParser());
 const driveSearchSelectionChain = driveSearchSelectionPrompt.pipe(llm).pipe(new StringOutputParser());
+const autoClassifyChain = autoClassifyPrompt.pipe(llm).pipe(new StringOutputParser());
 
 //Main function to decide what to do with a message based on the parsed intent
 export async function answerQuestion(message, requesterSessionId = null){
@@ -244,7 +338,7 @@ export async function answerQuestion(message, requesterSessionId = null){
 
         const intent = await parseIntent(message);
         console.log("Parsed intent:", intent);
-        
+
         //This takes care of all user information retrieval
         if (intent.type === 'GET_USER' || intent.action === 'GET_USER') {
             //Client side request for the list of all users, which we can then use to suggest who might be helpful for a question on a certain topic
@@ -281,12 +375,12 @@ export async function answerQuestion(message, requesterSessionId = null){
             const suggestion = await suggestUserForTopic(JSON.stringify(accessibleProfiles,null,2), message);
             console.log("User suggestion:", suggestion);
             return suggestion;
-            
+
         //This takes care of searching Google Drive
         } else if (intent.type === 'SEARCH_DRIVE' || intent.action === 'SEARCH_DRIVE') {
             const searchResults = await searchDriveForTopic(intent.query, requesterContext);
             return searchResults;
-            
+
         } else {
             return "Sorry, there is no documentation available for that topic and cannot reliably give you information. Please ask about a different topic or try rephrasing your question.";
         }

@@ -38,12 +38,26 @@ export default buildSchema(`
     message: String
   }
 
+  type DocumentTag {
+    id: ID!
+    drive_file_id: String!
+    file_name: String!
+    classification_level: String!
+    tags: String
+    auto_classified: Boolean
+    created_at: String
+    updated_at: String
+  }
+
   type Query {
     health: HealthStatus
     getAllUsers: [User]
     getAllUserProfiles: [Profile]
     getUserByID(id: ID!): User
     getUserProfile(session_id: String!): Profile
+    getAllDocumentTags: [DocumentTag]
+    getDocumentTags(drive_file_id: String!): DocumentTag
+    getDocumentsByTag(tag: String!): [DocumentTag]
   }
 
   type Interaction {
@@ -62,6 +76,9 @@ export default buildSchema(`
     updateUserProfile(session_id: String!, input: UserProfileInput!): Profile
     removeUser(id: ID!): Boolean
     createInteraction(session_id: String!, interactionType: String!, contentId: String!, contentTitle: String!, metadata: String): Boolean
+    setDocumentTags(drive_file_id: String!, file_name: String!, classification_level: String, tags: String!): DocumentTag
+    addTagToDocument(drive_file_id: String!, tag: String!): DocumentTag
+    removeTagFromDocument(drive_file_id: String!, tag: String!): DocumentTag
   }
 
   input UserProfileInput {

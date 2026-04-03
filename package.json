@@ -6,7 +6,7 @@
   "main": "index.js",
   "scripts": {
     "test": "node --experimental-vm-modules ./node_modules/jest-cli/bin/jest.js",
-    "start": "concurrently -n \"BOT,GQL\" --prefix-colors \"blue,green\" \"npm run bot\" \"npm run graph\" ",
+    "start": "node index.js",
     "bot": "node index.js",
     "graph": "node logic/graphql_setup/graphql_implementation.js"
   },

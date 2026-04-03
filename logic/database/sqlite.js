@@ -17,6 +17,7 @@ export function initDatabase() {
     fs.mkdirSync(dir, { recursive: true });
   }
   db = new Database(dbPath);
+  db.pragma('journal_mode = WAL');
   const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
   db.exec(schema);
   runMigrations();
@@ -58,6 +59,26 @@ function runMigrations() {
       }
 
       console.log('Migration completed: classification_level column added');
+    }
+
+    const docTagsExists = tables.some((t) => t.name === 'document_tags');
+    if (!docTagsExists) {
+      console.log('Creating document_tags table...');
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS document_tags (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          drive_file_id TEXT UNIQUE NOT NULL,
+          file_name TEXT NOT NULL,
+          classification_level TEXT NOT NULL DEFAULT 'internal',
+          tags TEXT NOT NULL DEFAULT '[]',
+          auto_classified INTEGER NOT NULL DEFAULT 0,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_doc_tags_file_id ON document_tags(drive_file_id);
+        CREATE INDEX IF NOT EXISTS idx_doc_tags_classification ON document_tags(classification_level);
+      `);
+      console.log('Migration completed: document_tags table created');
     }
   } catch (error) {
     console.error('Migration failed:', error.message);

@@ -5,11 +5,15 @@ const mockQueryGraphQL = jest.fn();
 const mockListFiles = jest.fn();
 const mockGetFile = jest.fn();
 
+const mockGetDocumentTags = jest.fn();
+const mockUpsertDocumentTags = jest.fn();
+
 const chainHandlers = {
   intent: jest.fn(),
   userInfo: jest.fn(),
   driveSearch: jest.fn(),
   driveSelection: jest.fn(),
+  autoClassify: jest.fn(),
 };
 
 function getChainHandler(template) {
@@ -27,6 +31,10 @@ function getChainHandler(template) {
 
   if (template.includes("distill the most relevant information")) {
     return chainHandlers.driveSelection;
+  }
+
+  if (template.includes("classifying a document for a software team")) {
+    return chainHandlers.autoClassify;
   }
 
   throw new Error(`Unknown prompt template: ${template}`);
@@ -74,6 +82,11 @@ await jest.unstable_mockModule("../graphql_setup/graphql_client.js", () => ({
   queryGraphQL: mockQueryGraphQL,
 }));
 
+await jest.unstable_mockModule("../database/documentTagService.js", () => ({
+  getDocumentTags: mockGetDocumentTags,
+  upsertDocumentTags: mockUpsertDocumentTags,
+}));
+
 const { answerQuestion } = await import("./rag_implementation.js");
 
 beforeEach(() => {
@@ -83,6 +96,10 @@ beforeEach(() => {
   chainHandlers.userInfo.mockResolvedValue("No matching users.");
   chainHandlers.driveSearch.mockResolvedValue("[]");
   chainHandlers.driveSelection.mockResolvedValue("IDK");
+  chainHandlers.autoClassify.mockResolvedValue('{"classification_level":"internal","tags":[]}');
+  // Default: files not yet in DB, so enrichment triggers auto-classify
+  mockGetDocumentTags.mockReturnValue(null);
+  mockUpsertDocumentTags.mockReturnValue(undefined);
 });
 
 describe("answerQuestion access filtering", () => {

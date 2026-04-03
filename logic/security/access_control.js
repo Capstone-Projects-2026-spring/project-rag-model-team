@@ -37,10 +37,22 @@ export function parseDriveFileClassification(file = {}) {
   return normalizeClassification(match?.[1]);
 }
 
+/**
+ * Parses topic tags from a Drive file's description or name.
+ * Expects format: "tags: onboarding, backend, api" (pipe-delimited from other metadata is fine).
+ */
+export function parseDriveFileTags(file = {}) {
+  const haystack = `${file.description || ''} ${file.name || ''}`;
+  const match = haystack.match(/tags\s*[:=]\s*([^|]+)/i);
+  if (!match) return [];
+  return match[1].split(',').map((t) => t.trim().toLowerCase()).filter(Boolean);
+}
+
 export function annotateFilesWithClassification(files = []) {
   return files.map((file) => ({
     ...file,
     classification_level: parseDriveFileClassification(file),
+    tags: parseDriveFileTags(file),
   }));
 }
 

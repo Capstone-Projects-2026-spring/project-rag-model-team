@@ -1,5 +1,11 @@
 import { getOne, getAll, runQuery } from '../database/sqlite.js';
-import { getClassificationForRole } from '../security/access_control.js';
+import { getClassificationForRole, normalizeClassification } from '../security/access_control.js';
+import {
+  upsertDocumentTags,
+  getDocumentTags,
+  getDocumentsByTag,
+  getAllDocumentTags,
+} from '../database/documentTagService.js';
 
 export const root = {
   // Simple health check query
@@ -220,6 +226,62 @@ export const root = {
     }
 
     return false;   // row still exists, delete failed
+  },
+  // Document tag queries
+  getAllDocumentTags: () => {
+    return getAllDocumentTags().map(doc => ({
+      ...doc,
+      tags: JSON.stringify(doc.tags),
+    }));
+  },
+  getDocumentTags: ({ drive_file_id }) => {
+    const doc = getDocumentTags(drive_file_id);
+    if (!doc) return null;
+    return { ...doc, tags: JSON.stringify(doc.tags) };
+  },
+  getDocumentsByTag: ({ tag }) => {
+    return getDocumentsByTag(tag).map(doc => ({
+      ...doc,
+      tags: JSON.stringify(doc.tags),
+    }));
+  },
+  // Document tag mutations
+  setDocumentTags: ({ drive_file_id, file_name, classification_level, tags }) => {
+    const level = normalizeClassification(classification_level || 'internal');
+    const parsedTags = JSON.parse(tags);
+    upsertDocumentTags(drive_file_id, file_name, level, parsedTags, false);
+    const updated = getDocumentTags(drive_file_id);
+    return updated ? { ...updated, tags: JSON.stringify(updated.tags) } : null;
+  },
+  addTagToDocument: ({ drive_file_id, tag }) => {
+    const existing = getDocumentTags(drive_file_id);
+    if (!existing) throw new Error(`Document with file ID ${drive_file_id} not found`);
+    const normalizedTag = tag.trim().toLowerCase();
+    if (!existing.tags.includes(normalizedTag)) {
+      upsertDocumentTags(
+        drive_file_id,
+        existing.file_name,
+        existing.classification_level,
+        [...existing.tags, normalizedTag],
+        existing.auto_classified
+      );
+    }
+    const updated = getDocumentTags(drive_file_id);
+    return updated ? { ...updated, tags: JSON.stringify(updated.tags) } : null;
+  },
+  removeTagFromDocument: ({ drive_file_id, tag }) => {
+    const existing = getDocumentTags(drive_file_id);
+    if (!existing) throw new Error(`Document with file ID ${drive_file_id} not found`);
+    const normalizedTag = tag.trim().toLowerCase();
+    upsertDocumentTags(
+      drive_file_id,
+      existing.file_name,
+      existing.classification_level,
+      existing.tags.filter(t => t !== normalizedTag),
+      existing.auto_classified
+    );
+    const updated = getDocumentTags(drive_file_id);
+    return updated ? { ...updated, tags: JSON.stringify(updated.tags) } : null;
   },
   // Mutation for creating a new interaction record (for tracking user interactions with content)
   createInteraction: ({ session_id, interactionType, contentId, contentTitle, metadata }) => {
