@@ -101,6 +101,11 @@ const autoClassifyPrompt = PromptTemplate.fromTemplate(`
   JSON only, no explanation.
 `);
 
+// Strip markdown code fences that the LLM sometimes wraps around JSON responses
+function stripCodeFences(str) {
+  return str.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+}
+
 //Functions to call the chains and decide what to do with the results
 
 async function parseIntent(message) {
@@ -109,7 +114,7 @@ async function parseIntent(message) {
     const result = await intentChain.invoke({ message });
     console.log("Raw intent result:", result);
     try {
-      return JSON.parse(result);
+      return JSON.parse(stripCodeFences(result));
     } catch (jsonError) {
       console.warn("Intent parse JSON failed, defaulting GENERAL; result:", result, jsonError);
       return { type: 'GENERAL' };
@@ -205,7 +210,7 @@ export async function autoClassifyDocument(file) {
       excerpt = fullContent.slice(0, 500);
     }
     const result = await autoClassifyChain.invoke({ name: file.name, excerpt: excerpt });
-    const parsed = JSON.parse(result);
+    const parsed = JSON.parse(stripCodeFences(result));
     return {
       classification_level: normalizeClassification(parsed.classification_level),
       tags: Array.isArray(parsed.tags) ? parsed.tags.map(t => String(t).toLowerCase()) : [],
@@ -264,7 +269,7 @@ async function searchDriveForTopic(topic, requesterContext) {
 
   let fileSuggestions;
   try {
-    fileSuggestions = JSON.parse(fileSuggestionsString);
+    fileSuggestions = JSON.parse(stripCodeFences(fileSuggestionsString));
   } catch (error) {
     console.error("Error parsing file suggestions JSON:", error);
     return "Sorry, I couldn't find relevant information in our documents.";
