@@ -1,4 +1,11 @@
 import { getOne, getAll, runQuery } from '../database/sqlite.js';
+import { getClassificationForRole, normalizeClassification } from '../security/access_control.js';
+import {
+  upsertDocumentTags,
+  getDocumentTags,
+  getDocumentsByTag,
+  getAllDocumentTags,
+} from '../database/documentTagService.js';
 
 export const root = {
   // Simple health check query
@@ -50,6 +57,7 @@ export const root = {
   createUserProfile: async ({ input }) => {
     try {
       console.log('Creating user profile with input:', input);
+      const classificationLevel = getClassificationForRole(input.role);
       
       // First create the user profile
       await runQuery(
@@ -74,15 +82,16 @@ export const root = {
       console.log('Creating user info for profile ID:', profileId);
       const infoResult = await runQuery(
         `INSERT INTO user_info (
-          profile_id, session_id, name, email, role, experience_level, department,
+          profile_id, session_id, name, email, role, classification_level, experience_level, department,
           areas_of_interest, technical_skills, learning_goals, preferred_content_complexity
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           profileId,
           input.session_id,
           input.name || null,
           input.email || null,
           input.role,
+          classificationLevel,
           input.experience_level,
           input.department || null,
           input.areas_of_interest || null,
@@ -120,6 +129,7 @@ export const root = {
   // Mutation for updating an existing user profile and user info
   updateUserProfile: async ({ session_id, input }) => {
     try {
+      const classificationLevel = getClassificationForRole(input.role);
       // First get the user profile
       const profile = await getOne(
         `SELECT id, session_id, created_at FROM user_profiles WHERE session_id = ?`,
@@ -140,7 +150,7 @@ export const root = {
         // Update existing user_info
         await runQuery(
           `UPDATE user_info SET
-            name = ?, email = ?, role = ?, experience_level = ?, department = ?,
+            name = ?, email = ?, role = ?, classification_level = ?, experience_level = ?, department = ?,
             areas_of_interest = ?, technical_skills = ?, learning_goals = ?, preferred_content_complexity = ?,
             updated_at = CURRENT_TIMESTAMP
            WHERE profile_id = ?`,
@@ -148,6 +158,7 @@ export const root = {
             input.name || null,
             input.email || null,
             input.role,
+            classificationLevel,
             input.experience_level,
             input.department || null,
             input.areas_of_interest || null,
@@ -161,15 +172,16 @@ export const root = {
         // Create new user_info
         await runQuery(
           `INSERT INTO user_info (
-            profile_id, session_id, name, email, role, experience_level, department,
+            profile_id, session_id, name, email, role, classification_level, experience_level, department,
             areas_of_interest, technical_skills, learning_goals, preferred_content_complexity
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             profile.id,
             session_id,
             input.name || null,
             input.email || null,
             input.role,
+            classificationLevel,
             input.experience_level,
             input.department || null,
             input.areas_of_interest || null,
@@ -214,6 +226,62 @@ export const root = {
     }
 
     return false;   // row still exists, delete failed
+  },
+  // Document tag queries
+  getAllDocumentTags: () => {
+    return getAllDocumentTags().map(doc => ({
+      ...doc,
+      tags: JSON.stringify(doc.tags),
+    }));
+  },
+  getDocumentTags: ({ drive_file_id }) => {
+    const doc = getDocumentTags(drive_file_id);
+    if (!doc) return null;
+    return { ...doc, tags: JSON.stringify(doc.tags) };
+  },
+  getDocumentsByTag: ({ tag }) => {
+    return getDocumentsByTag(tag).map(doc => ({
+      ...doc,
+      tags: JSON.stringify(doc.tags),
+    }));
+  },
+  // Document tag mutations
+  setDocumentTags: ({ drive_file_id, file_name, classification_level, tags }) => {
+    const level = normalizeClassification(classification_level || 'internal');
+    const parsedTags = JSON.parse(tags);
+    upsertDocumentTags(drive_file_id, file_name, level, parsedTags, false);
+    const updated = getDocumentTags(drive_file_id);
+    return updated ? { ...updated, tags: JSON.stringify(updated.tags) } : null;
+  },
+  addTagToDocument: ({ drive_file_id, tag }) => {
+    const existing = getDocumentTags(drive_file_id);
+    if (!existing) throw new Error(`Document with file ID ${drive_file_id} not found`);
+    const normalizedTag = tag.trim().toLowerCase();
+    if (!existing.tags.includes(normalizedTag)) {
+      upsertDocumentTags(
+        drive_file_id,
+        existing.file_name,
+        existing.classification_level,
+        [...existing.tags, normalizedTag],
+        existing.auto_classified
+      );
+    }
+    const updated = getDocumentTags(drive_file_id);
+    return updated ? { ...updated, tags: JSON.stringify(updated.tags) } : null;
+  },
+  removeTagFromDocument: ({ drive_file_id, tag }) => {
+    const existing = getDocumentTags(drive_file_id);
+    if (!existing) throw new Error(`Document with file ID ${drive_file_id} not found`);
+    const normalizedTag = tag.trim().toLowerCase();
+    upsertDocumentTags(
+      drive_file_id,
+      existing.file_name,
+      existing.classification_level,
+      existing.tags.filter(t => t !== normalizedTag),
+      existing.auto_classified
+    );
+    const updated = getDocumentTags(drive_file_id);
+    return updated ? { ...updated, tags: JSON.stringify(updated.tags) } : null;
   },
   // Mutation for creating a new interaction record (for tracking user interactions with content)
   createInteractionRecord: async ({ session_id, interactionType, message }) => {
@@ -260,7 +328,7 @@ export const root = {
 
       return { profile_id: profile_id, interaction_type: interaction_type_, message: message_, created_at: created_at  };
     } catch (error) {
-      console.error('Error in createRecord:', error);
+      console.error('Error in createInteraction:', error);
       throw new Error(`Failed to create interaction record: ${error.message}`);
     }
   },

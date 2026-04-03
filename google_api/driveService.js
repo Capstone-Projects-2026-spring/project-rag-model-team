@@ -52,7 +52,7 @@ export async function listFiles(pageSize = 50) {
 
     const res = await drive.files.list({
       pageSize: pageSize,
-      fields: "files(id, name, mimeType, webViewLink, modifiedTime, size)",
+      fields: "files(id, name, description, mimeType, webViewLink, modifiedTime, size)",
       q: query,
       orderBy: "modifiedTime desc"
     });
@@ -96,7 +96,7 @@ export async function searchFiles(query, pageSize = 20) {
 
     const res = await drive.files.list({
       pageSize: pageSize,
-      fields: "files(id, name, mimeType, webViewLink, modifiedTime)",
+      fields: "files(id, name, description, mimeType, webViewLink, modifiedTime)",
       q: searchQuery,
       orderBy: "modifiedTime desc"
     });
@@ -114,7 +114,7 @@ export async function getFileMetadata(fileId) {
 
     const res = await drive.files.get({
       fileId: fileId,
-      fields: "id, name, mimeType, webViewLink, modifiedTime, size, owners"
+      fields: "id, name, description, mimeType, webViewLink, modifiedTime, size, owners"
     });
 
     return res.data;

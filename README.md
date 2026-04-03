@@ -22,7 +22,7 @@ At a high level, the system should let a user ask project-related questions from
 
 ## Conceptual Design
 
-The project is built as a Node.js application using Slack Bolt for the bot interface. A GraphQL layer provides access to stored user and profile information, while a SQL.js-backed SQLite database stores user profiles and interaction-related data. For document retrieval, the bot can access JSON-based documentation stored in Google Drive through a service account. For answer generation and routing, the project uses LangChain prompt pipelines with a Groq-hosted LLM. Documentation for the project is maintained separately in a Docusaurus site.
+The project is built as a Node.js application using Slack Bolt for the bot interface. A GraphQL layer provides access to stored user and profile information, while a SQLite database stores user profiles and interaction-related data. For document retrieval, the bot can access JSON-based documentation stored in Google Drive through a service account. For answer generation and routing, the project uses LangChain prompt pipelines with a Groq-hosted LLM. Documentation for the project is maintained separately in a Docusaurus site.
 
 ## Background
 
@@ -135,16 +135,18 @@ GOOGLE_SERVICE_ACCOUNT_KEY_PATH=./service-account-key.json
 GOOGLE_DRIVE_FOLDER_ID=
 ```
 
-Start the supporting GraphQL service in one terminal:
-
-```bash
-node logic/graphql_setup/graphql_implementation.js
-```
-
-Start the Slack bot in a second terminal:
+Start everything with a single command:
 
 ```bash
 npm start
+```
+
+This starts both the Slack bot and the GraphQL server in a single process. You should see:
+
+```
+✅ GraphQL database initialized
+GraphQL running on http://localhost:4000/graphql
+⚡️ Slack bot is running in socket mode!
 ```
 
 Optional verification:
@@ -155,10 +157,42 @@ npm test
 
 Notes:
 
-- The main bot entry point is the root `index.js`, not `slack-bot/slack-bot.js`.
-- The GraphQL service should be running before testing user-profile questions.
-- Database initialization happens automatically when the backend/GraphQL layer starts.
-- If Google Drive credentials are missing, the bot can still start, but Drive-backed retrieval features will not work.
+- The main bot entry point is the root `index.js`.
+- Database initialization and migrations run automatically on startup.
+- If Google Drive credentials are missing, the bot can still start, but Drive-backed document retrieval will not work.
+
+### Slash Commands
+
+Register the following slash commands in your Slack app under **Slash Commands**. Set the Request URL to any valid URL (Socket Mode does not use it). Reinstall the app after adding commands.
+
+| Command | Description |
+|---|---|
+| `/update-profile` | Update your role or experience level |
+| `/reset` | Delete your profile and start over |
+| `/sync-docs` | Bulk classify all Google Drive documents using LLM auto-tagging |
+| `/classify-docs` | Change a specific document's classification level via a dropdown modal |
+
+You can also type `help` or `commands` in any channel to see this list from the bot.
+
+### User Flow
+
+1. When a new user joins the workspace or DMs the bot, they are prompted to complete a profile setup (role + experience level).
+2. Until the profile is set up, the bot will not answer questions.
+3. Once set up, users can ask questions by mentioning the bot in a channel (`@BotName what is project alpha?`) or by sending a direct message without any mention.
+4. All bot responses and command confirmations are ephemeral (only visible to the user who triggered them).
+
+### Document Classification
+
+Documents in Google Drive can be assigned a classification level that controls who can access them:
+
+| Level | Roles with access |
+|---|---|
+| `public` | Everyone |
+| `internal` | Junior Dev, Mid Dev, Designer, QA (and above) |
+| `confidential` | Senior Dev, DevOps (and above) |
+| `restricted` | Manager only |
+
+Run `/sync-docs` to auto-classify all Drive documents, or `/classify-docs` to manually set a document's level.
 
 ## Collaborators
 

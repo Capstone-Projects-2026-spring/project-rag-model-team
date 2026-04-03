@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS user_info (
     name TEXT,
     email TEXT,
     role TEXT NOT NULL, -- e.g., 'junior_dev', 'senior_dev', 'manager', 'designer', etc.
+    classification_level TEXT NOT NULL DEFAULT 'internal', -- e.g., 'public', 'internal', 'confidential', 'restricted'
     experience_level TEXT NOT NULL, -- e.g., 'entry', 'mid', 'senior', 'expert'
     department TEXT,
     areas_of_interest TEXT, -- JSON array as TEXT
@@ -39,6 +40,22 @@ CREATE TABLE IF NOT EXISTS user_interactions (
 CREATE INDEX IF NOT EXISTS idx_user_profiles_session ON user_profiles(session_id);
 CREATE INDEX IF NOT EXISTS idx_user_info_profile ON user_info(profile_id);
 CREATE INDEX IF NOT EXISTS idx_user_info_role ON user_info(role);
+CREATE INDEX IF NOT EXISTS idx_user_info_classification ON user_info(classification_level);
 CREATE INDEX IF NOT EXISTS idx_user_info_experience ON user_info(experience_level);
 CREATE INDEX IF NOT EXISTS idx_interactions_profile ON user_interactions(profile_id);
 CREATE INDEX IF NOT EXISTS idx_interactions_timestamp ON user_interactions(created_at);
+
+-- Document Tags Table (tag cache for Google Drive files)
+CREATE TABLE IF NOT EXISTS document_tags (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    drive_file_id TEXT UNIQUE NOT NULL,
+    file_name TEXT NOT NULL,
+    classification_level TEXT NOT NULL DEFAULT 'internal', -- e.g., 'public', 'internal', 'confidential', 'restricted'
+    tags TEXT NOT NULL DEFAULT '[]',                       -- JSON array of topic tag strings
+    auto_classified INTEGER NOT NULL DEFAULT 0,            -- 1 = LLM classified, 0 = from Drive metadata
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_doc_tags_file_id ON document_tags(drive_file_id);
+CREATE INDEX IF NOT EXISTS idx_doc_tags_classification ON document_tags(classification_level);

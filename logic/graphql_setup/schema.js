@@ -22,6 +22,7 @@ export default buildSchema(`
     name: String
     email: String
     role: String
+    classification_level: String
     experience_level: String
     department: String
     areas_of_interest: String
@@ -35,6 +36,17 @@ export default buildSchema(`
   type HealthStatus {
     status: String
     message: String
+  }
+
+  type DocumentTag {
+    id: ID!
+    drive_file_id: String!
+    file_name: String!
+    classification_level: String!
+    tags: String
+    auto_classified: Boolean
+    created_at: String
+    updated_at: String
   }
 
   type Query {
