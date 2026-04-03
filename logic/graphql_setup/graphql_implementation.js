@@ -1,6 +1,6 @@
 // graphql_implementation.js
 import express from 'express';
-import { createHandler } from 'graphql-http/lib/use/express.js';
+import { createHandler } from 'graphql-http/lib/use/express';
 import schema from './schema.js';
 import { root } from './resolvers.js';
 import { initDatabase } from '../database/sqlite.js';
