@@ -65,14 +65,21 @@ const intentPrompt = PromptTemplate.fromTemplate(`
 
 //Natural Language
 const userInformationPrompt = PromptTemplate.fromTemplate(`
-    Given the following user information, can you suggest a user that may be helpful to answer a question about {topic}?
+    Given the following user information, suggest up to 3 users who may be helpful to answer a question about {topic}.
 
     User information:
     {userInfo}
 
-    If the user is asking information about hierarchy in the organization, then you may list out the multiple users and their roles. If the user is asking about who might be helpful for a question on a certain topic, you can use the information about users' roles, experience levels, departments, and areas of interest to make suggestions.
-    If there are no users that seem helpful for questions about the topic, say something like "I don't think there are any users that may be helpful to answer this question".
-    Please answer in natural language, as if you were responding to a question about {topic} with suggestions of who might be helpful to answer questions about that topic. You can use the information about users' roles, experience levels, departments, and areas of interest to make suggestions.
+    Return JSON only with this exact structure:
+    {{"suggestions":[{{"session_id":"<session_id>","name":"<name>","role":"<role>","department":"<department>","reason":"<reason>"}}],"explanation":"<plain language summary>"}}
+
+    Rules:
+    - Include only users who seem directly helpful for the topic.
+    - Copy session_id exactly from the input userInfo for each suggested user.
+    - Provide a one-sentence reason for each recommendation.
+    - If there are no helpful users, return {{"suggestions": [], "explanation": "I don't think there are any users that may be helpful to answer this question."}}
+
+    JSON only, no explanation.
 `);
 
 //JSON ONLY
@@ -175,7 +182,23 @@ async function parseIntent(message) {
 async function suggestUserForTopic(userInfo, topic) {
   const result = await userInfoChain.invoke({ userInfo, topic });
   console.log("Raw user suggestion result:", result);
-  return result;
+
+  try {
+    const parsed = JSON.parse(stripCodeFences(result));
+    if (parsed && Array.isArray(parsed.suggestions)) {
+      return {
+        suggestions: parsed.suggestions,
+        explanation: parsed.explanation || result,
+      };
+    }
+  } catch (error) {
+    console.warn("User suggestion parse failed, returning raw suggestion text:", error);
+  }
+
+  return {
+    suggestions: [],
+    explanation: result,
+  };
 }
 
 function isGreetingMessage(message) {
@@ -437,6 +460,7 @@ export async function answerQuestion(message, requesterSessionId = null, preempt
         
         let answer = "";
         let intentType = "";
+        let suggestedUsers = [];
         
         //This takes care of all user information retrieval
         if (intent.type === 'GET_USER' || intent.action === 'GET_USER') {
@@ -470,7 +494,9 @@ export async function answerQuestion(message, requesterSessionId = null, preempt
             } else {
               console.log("Accessible users:", JSON.stringify(accessibleProfiles,null,2));
               if(!preemptive) {
-                answer = await suggestUserForTopic(JSON.stringify(accessibleProfiles,null,2), message);
+                const suggestionResult = await suggestUserForTopic(JSON.stringify(accessibleProfiles,null,2), message);
+                answer = suggestionResult.explanation;
+                suggestedUsers = suggestionResult.suggestions || [];
               } else {
                 answer = await preemptivePromptingChain.invoke({
                   topic: message,
@@ -497,10 +523,11 @@ export async function answerQuestion(message, requesterSessionId = null, preempt
         if (!preemptive) {
           followUpQuestions = await generateFollowUpQuestions(message, answer, intentType);
         }
-        // Return object with both answer and follow-up questions
+        // Return object with answer, follow-up questions, and any structured user suggestions
         return {
             answer,
-            followUpQuestions
+            followUpQuestions,
+            suggestedUsers,
         };
     } catch (error) {
         console.error("Error in answerQuestion:", error);

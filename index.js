@@ -156,6 +156,60 @@ function getIntakeButtonBlocks() {
   ];
 }
 
+function buildUserSuggestionBlocks(answer, suggestedUsers) {
+  const blocks = [
+    {
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: answer,
+      },
+    },
+  ];
+
+  if (Array.isArray(suggestedUsers) && suggestedUsers.length > 0) {
+    blocks.push({ type: "divider" });
+
+    suggestedUsers.slice(0, 5).forEach((user) => {
+      const labelParts = [user.role, user.department].filter(Boolean);
+      blocks.push({
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: `*${user.name}*${labelParts.length ? ` • ${labelParts.join(" • ")}` : ""}${user.reason ? `\n_${user.reason}_` : ""}`,
+        },
+        accessory: {
+          type: "button",
+          text: { type: "plain_text", text: "Start group chat", emoji: true },
+          action_id: "start_groupchat",
+          value: JSON.stringify({
+            targetSessionId: user.session_id,
+            topic: user.reason || "a topic you asked about",
+          }),
+        },
+      });
+    });
+  }
+
+  return blocks;
+}
+
+function appendFollowUpQuestions(blocks, followUpQuestions) {
+  if (Array.isArray(followUpQuestions) && followUpQuestions.length > 0) {
+    blocks.push({ type: "divider" });
+    blocks.push({
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: `*You might also want to ask:*
+${followUpQuestions.map((question, index) => `${index + 1}. ${question}`).join("\n")}`,
+      },
+    });
+  }
+
+  return blocks;
+}
+
 // ================ Basic Bot Handlers =====================
 
 app.event("reaction_added", async ({ event, client }) => {
@@ -225,16 +279,22 @@ app.event("app_mention", async ({ event, say, client }) => {
   if (typeof response === 'string') {
     await say({ text: response });
   } else {
-    let messageText = response.answer;
-
-    if (response.followUpQuestions && response.followUpQuestions.length > 0) {
-      messageText += "\n\n💡 *You might also want to ask:*\n";
-      response.followUpQuestions.forEach((question, index) => {
-        messageText += `${index + 1}. ${question}\n`;
-      });
+    if (Array.isArray(response.suggestedUsers) && response.suggestedUsers.length > 0) {
+      const blocks = appendFollowUpQuestions(
+        buildUserSuggestionBlocks(response.answer, response.suggestedUsers),
+        response.followUpQuestions,
+      );
+      await say({ blocks, text: response.answer });
+    } else {
+      let messageText = response.answer;
+      if (response.followUpQuestions && response.followUpQuestions.length > 0) {
+        messageText += "\n\n💡 *You might also want to ask:*\n";
+        response.followUpQuestions.forEach((question, index) => {
+          messageText += `${index + 1}. ${question}\n`;
+        });
+      }
+      await say({ text: messageText });
     }
-
-    await say({ text: messageText });
   }
 });
 
@@ -278,16 +338,20 @@ app.event("message", async ({ event, say, client }) => {
 
     if (typeof response === 'string') {
       await say({ text: response });
+    } else if (Array.isArray(response.suggestedUsers) && response.suggestedUsers.length > 0) {
+      const blocks = appendFollowUpQuestions(
+        buildUserSuggestionBlocks(response.answer, response.suggestedUsers),
+        response.followUpQuestions,
+      );
+      await say({ blocks, text: response.answer });
     } else {
       let messageText = response.answer;
-
       if (response.followUpQuestions && response.followUpQuestions.length > 0) {
         messageText += "\n\n💡 *You might also want to ask:*\n";
         response.followUpQuestions.forEach((question, index) => {
           messageText += `${index + 1}. ${question}\n`;
         });
       }
-
       await say({ text: messageText });
     }
   } catch (error) {
@@ -307,6 +371,65 @@ app.action("open_intake_modal", async ({ ack, body, client }) => {
     });
   } catch (error) {
     console.error("Error opening modal:", error);
+  }
+});
+
+app.action("start_groupchat", async ({ ack, body, client }) => {
+  await ack();
+
+  let payload;
+  try {
+    payload = JSON.parse(body.actions[0].value);
+  } catch (error) {
+    console.error("Failed to parse group chat action value:", error);
+    await client.chat.postEphemeral({
+      channel: body.channel.id,
+      user: body.user.id,
+      text: "Sorry, I couldn't start the group chat due to an internal error.",
+    });
+    return;
+  }
+
+  const requesterId = body.user.id;
+  const targetSessionId = payload.targetSessionId;
+  const topic = payload.topic || "a topic you asked about";
+
+  if (!targetSessionId || targetSessionId === requesterId) {
+    await client.chat.postEphemeral({
+      channel: body.channel.id,
+      user: requesterId,
+      text: "I couldn't start the group chat because the selected user is invalid.",
+    });
+    return;
+  }
+
+  try {
+    const openResult = await client.conversations.open({
+      users: `${requesterId},${targetSessionId}`,
+    });
+
+    const channelId = openResult.channel?.id;
+    if (!channelId) {
+      throw new Error("No channel returned from conversations.open");
+    }
+
+    await client.chat.postMessage({
+      channel: channelId,
+      text: `Hi <@${targetSessionId}> and <@${requesterId}>! I created this group chat to connect you via Keystone Bot about ${topic}.`,
+    });
+
+    await client.chat.postEphemeral({
+      channel: body.channel.id,
+      user: requesterId,
+      text: `✅ Group chat created with <@${targetSessionId}>.`,
+    });
+  } catch (error) {
+    console.error("Error creating group chat:", error);
+    await client.chat.postEphemeral({
+      channel: body.channel.id,
+      user: requesterId,
+      text: "Sorry, I couldn't create the group chat. Please try again.",
+    });
   }
 });
 
