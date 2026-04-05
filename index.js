@@ -240,10 +240,22 @@ app.event("app_mention", async ({ event, say, client }) => {
 
 // ============= DM Handler =============
 
-app.event("message", async ({ event, say }) => {
-  if (event.channel_type !== "im" || event.bot_id) return;
-
+app.event("message", async ({ event, say, client }) => {
+  if (event.bot_id) {
+      return;
+  }
   const userId = event.user;
+  if (event.channel_type !== "im" && event.action !== "app_mention") {
+    const preemptiveResponse = await answerQuestion(event.text, event.user, true);
+    console.log("Preemptive response:", preemptiveResponse);
+    if (preemptiveResponse) {
+      await client.chat.postEphemeral({ 
+      channel: event.channel,
+      user: userId,
+      text: preemptiveResponse.answer });
+    }
+    return;
+  }
   console.log(`💬 DM from ${userId}`);
 
   try {
