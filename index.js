@@ -35,8 +35,8 @@ const interactionLogMutation = `
   }
 `;
 
-function logInteraction(userId, message) {
-  queryGraphQL(interactionLogMutation, { sessionID: userId, interactionType: "reactive", message })
+function logInteraction(userId, message, type) {
+  queryGraphQL(interactionLogMutation, { sessionID: userId, interactionType: type, message })
     .catch(err => console.warn("Interaction logging failed:", err.message));
 }
 
@@ -219,7 +219,7 @@ app.event("app_mention", async ({ event, say, client }) => {
 
   const question = event.text.replace(/<@[^>]+>/, "").trim();
   console.log("User asked a question:", question);
-  logInteraction(event.user, question);
+  logInteraction(event.user, question, "reactive");
   const response = await answerQuestion(question, event.user);
 
   if (typeof response === 'string') {
@@ -240,10 +240,23 @@ app.event("app_mention", async ({ event, say, client }) => {
 
 // ============= DM Handler =============
 
-app.event("message", async ({ event, say }) => {
-  if (event.channel_type !== "im" || event.bot_id) return;
-
+app.event("message", async ({ event, say, client }) => {
+  if (event.bot_id) {
+      return;
+  }
   const userId = event.user;
+  if (event.channel_type !== "im" && event.action !== "app_mention") {
+    const preemptiveResponse = await answerQuestion(event.text, event.user, true);
+    console.log("Preemptive response:", preemptiveResponse);
+    if (preemptiveResponse) {
+      logInteraction(userId, event.text, "preemptive");
+      await client.chat.postEphemeral({ 
+      channel: event.channel,
+      user: userId,
+      text: preemptiveResponse.answer });
+    }
+    return;
+  }
   console.log(`💬 DM from ${userId}`);
 
   try {
@@ -260,7 +273,7 @@ app.event("message", async ({ event, say }) => {
     }
 
     // Profile exists — answer the question directly (no @ needed in DMs)
-    logInteraction(userId, event.text);
+    logInteraction(userId, event.text, "reactive");
     const response = await answerQuestion(event.text, userId);
 
     if (typeof response === 'string') {

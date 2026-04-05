@@ -284,7 +284,7 @@ describe("answerQuestion access filtering", () => {
 
     const response = await answerQuestion("Show me the roadmap", "U_REQUESTER");
 
-    expect(response.answer).toContain("does not allow me to share");
+    expect(response.answer).toContain("I can't share this information with you at the moment");
     expect(response.followUpQuestions).toEqual([]);
     expect(mockGetFile).not.toHaveBeenCalled();
     expect(chainHandlers.driveSelection).not.toHaveBeenCalled();

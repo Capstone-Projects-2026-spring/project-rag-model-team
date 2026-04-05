@@ -73,5 +73,5 @@ export function filterAccessibleProfiles(profiles = [], userClassification) {
 
 export function buildAccessDeniedMessage(topic) {
   const suffix = topic ? ` for "${topic}"` : '';
-  return `Sorry, your current access level does not allow me to share that information${suffix}.`;
+  return `Sorry, I can't share this information with you at the moment due to your current access level or a lack of informaion: ${suffix}.`;
 }

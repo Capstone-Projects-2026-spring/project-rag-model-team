@@ -32,6 +32,21 @@ async function streamToString(stream) {
   return Buffer.concat(chunks).toString('utf8');
 }
 
+// Helper function to extract JSON array from LLM response
+function extractJSONArray(text) {
+  // Try to find JSON array in the text
+  const jsonMatch = text.match(/\[.*\]/s);
+  if (jsonMatch) {
+    try {
+      return JSON.parse(jsonMatch[0]);
+    } catch (e) {
+      // If parsing fails, return empty array
+      return [];
+    }
+  }
+  return [];
+}
+
 //All the prompt templates used
 
 //JSON ONLY
@@ -43,8 +58,9 @@ const intentPrompt = PromptTemplate.fromTemplate(`
   Return one of these JSON formats and only these formats, no explanation:
   - Get all users:        {{"type": "GET_USER", "action": "GET_ALL"}}
   - Search Google Drive:  {{"type": "SEARCH_DRIVE", "query": "<search terms>"}}
+  - General question:     {{"type": "GENERAL"}}
 
-  JSON only, no explanation. Information about people is most likely suited to GET_USER, and information about projects or documents is most likely suited to SEARCH_DRIVE, but use your judgement based on the content of the message.
+  JSON only, no explanation. Information about people is most likely suited to GET_USER (words like anyone, who, or someone may be key), and information about projects or documents is most likely suited to SEARCH_DRIVE (words like project, document, or goal may be useful), but use your judgement based on the content of the message - you are trying to see what you can help with. Only use GENERAL as a last resort.
 `);
 
 //Natural Language
@@ -71,7 +87,7 @@ const driveSearchPrompt = PromptTemplate.fromTemplate(`
     - If no file is a clear match, return an empty array.
 
     Return a JSON array with the format: [{{"id": "file.id", "name": "file.name"}}]
-    JSON only, no explanation.
+    Do not add any text before or after the JSON. JSON only.
 `);
 
 //Natural Language
@@ -124,6 +140,17 @@ const followUpQuestionsPrompt = PromptTemplate.fromTemplate(`
     
     Return ONLY a JSON array of question strings with no explanation, for example:
     ["Question 1 here?", "Question 2 here?", "Question 3 here?"]
+`);
+
+//Preemptive suggestion prompt - not fully implemented yet
+const preemptivePrompting = PromptTemplate.fromTemplate(`
+    Message: {topic}
+    Data: {data}
+    You are a helpful assistant that has to be prompted to answer direct questions, right now, you are reading the discussions of people and the information that could be used to answer their questions. 
+    Your task is to get the user to ask you a question that you can answer with the information you have.
+    Please suggest a question that this user might be able to ask you about with the data provided. For example "I see that you're interested in project X, feel free to ask me about it!"
+    Keep responses under 20 words max.
+    If you cannot make any suggestions based on the content of the message, please say "IDK" and only "IDK".
 `);
 
 //Functions to call the chains and decide what to do with the results
@@ -263,7 +290,7 @@ function enrichFilesWithTags(annotatedFiles) {
   });
 }
 
-async function searchDriveForTopic(topic, requesterContext) {
+async function searchDriveForTopic(topic, requesterContext, preemptive = false) {
   const files = await listFiles();
   // Annotate with Drive metadata first, then override with DB values (DB takes priority)
   const annotated = annotateFilesWithClassification(files);
@@ -289,7 +316,7 @@ async function searchDriveForTopic(topic, requesterContext) {
 
   let fileSuggestions;
   try {
-    fileSuggestions = JSON.parse(stripCodeFences(fileSuggestionsString));
+    fileSuggestions = extractJSONArray(fileSuggestionsString);
   } catch (error) {
     console.error("Error parsing file suggestions JSON:", error);
     return "Sorry, I couldn't find relevant information in our documents.";
@@ -328,7 +355,22 @@ async function searchDriveForTopic(topic, requesterContext) {
         }
     }));
     console.log("Retrieved file contents:", fileContents);
-    try {
+    if (!preemptive){
+      return await answerDriveSearchQuestion(fileContents, topic);
+    } else {
+      console.log("Invoking preemptive prompting chain with file contents");
+      return await preemptivePromptingChain.invoke({
+                  topic: topic,
+                  data: fileContents});
+    }
+  } catch (error) {
+    console.error("Error retrieving file contents:", error);
+    return "Sorry, I couldn't retrieve the documents from our drive.";
+  }
+}
+
+async function answerDriveSearchQuestion(fileContents, topic) {
+  try {
         const finalAnswer = await driveSearchSelectionChain.invoke({ content: fileContents, topic });
         if (finalAnswer.trim() === "IDK") {
             return "Sorry, I couldn't find relevant information in our documents.";
@@ -339,10 +381,6 @@ async function searchDriveForTopic(topic, requesterContext) {
         console.error("Error invoking driveSearchSelectionChain:", error);
         return "Sorry, I couldn't process the information from the documents.";
     }
-  } catch (error) {
-    console.error("Error retrieving file contents:", error);
-    return "Sorry, I couldn't retrieve the documents from our drive.";
-  }
 }
 
 async function generateFollowUpQuestions(originalQuestion, answer, intentType) {
@@ -380,9 +418,10 @@ const driveSearchChain = driveSearchPrompt.pipe(llm).pipe(new StringOutputParser
 const driveSearchSelectionChain = driveSearchSelectionPrompt.pipe(llm).pipe(new StringOutputParser());
 const autoClassifyChain = autoClassifyPrompt.pipe(llm).pipe(new StringOutputParser());
 const followUpQuestionsChain = followUpQuestionsPrompt.pipe(llm).pipe(new StringOutputParser());
+const preemptivePromptingChain = preemptivePrompting.pipe(llm).pipe(new StringOutputParser());
 
 //Main function to decide what to do with a message based on the parsed intent
-export async function answerQuestion(message, requesterSessionId = null){
+export async function answerQuestion(message, requesterSessionId = null, preemptive = false) {
     try {
         const requesterContext = await getRequesterAccessContext(requesterSessionId);
 
@@ -392,6 +431,9 @@ export async function answerQuestion(message, requesterSessionId = null){
 
         const intent = await parseIntent(message);
         console.log("Parsed intent:", intent);
+        if(preemptive && intent.type == 'GENERAL') {
+          return;
+        }
         
         let answer = "";
         let intentType = "";
@@ -427,24 +469,34 @@ export async function answerQuestion(message, requesterSessionId = null){
               answer = buildAccessDeniedMessage(message);
             } else {
               console.log("Accessible users:", JSON.stringify(accessibleProfiles,null,2));
-              answer = await suggestUserForTopic(JSON.stringify(accessibleProfiles,null,2), message);
+              if(!preemptive) {
+                answer = await suggestUserForTopic(JSON.stringify(accessibleProfiles,null,2), message);
+              } else {
+                answer = await preemptivePromptingChain.invoke({
+                  topic: message,
+                  data: JSON.stringify(accessibleProfiles,null,2)
+                });
+              }
+              
               console.log("User suggestion:", answer);
             }
             intentType = "GET_USER";
 
         //This takes care of searching Google Drive
         } else if (intent.type === 'SEARCH_DRIVE' || intent.action === 'SEARCH_DRIVE') {
-            answer = await searchDriveForTopic(intent.query, requesterContext);
+            console.log("Searching drive for topic:", intent.query);
+            answer = await searchDriveForTopic(intent.query, requesterContext, preemptive);
             intentType = "SEARCH_DRIVE";
-            
         } else {
             answer = "Sorry, there is no documentation available for that topic and cannot reliably give you information. Please ask about a different topic or try rephrasing your question.";
             intentType = "GENERAL";
         }
         
         // Generate follow-up questions
-        const followUpQuestions = await generateFollowUpQuestions(message, answer, intentType);
-        
+        let followUpQuestions = null;
+        if (!preemptive) {
+          followUpQuestions = await generateFollowUpQuestions(message, answer, intentType);
+        }
         // Return object with both answer and follow-up questions
         return {
             answer,
