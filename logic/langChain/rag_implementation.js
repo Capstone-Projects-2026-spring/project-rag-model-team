@@ -69,7 +69,8 @@ const userInformationPrompt = PromptTemplate.fromTemplate(`
 
     User information:
     {userInfo}
-
+    
+    Please keep answers to 30 words or less.
     If the user is asking information about hierarchy in the organization, then you may list out the multiple users and their roles. If the user is asking about who might be helpful for a question on a certain topic, you can use the information about users' roles, experience levels, departments, and areas of interest to make suggestions.
     If there are no users that seem helpful for questions about the topic, say something like "I don't think there are any users that may be helpful to answer this question".
     Please answer in natural language, as if you were responding to a question about {topic} with suggestions of who might be helpful to answer questions about that topic. You can use the information about users' roles, experience levels, departments, and areas of interest to make suggestions.
@@ -95,6 +96,7 @@ const driveSearchSelectionPrompt = PromptTemplate.fromTemplate(`
     Given the following files, can you distill the most relevant information to answer a question about {topic} from the content of these documents?
     If the question is asking about what information you do have, it is okay to list out a few file names that could help the user make further questions.
     Document contents: {content}
+    Please keep answers to 30 words or less.
     Please answer the question about {topic} using only the information from these documents. If you don't have enough information to answer, say "IDK" and only "IDK".
 `);
 
@@ -421,7 +423,7 @@ const followUpQuestionsChain = followUpQuestionsPrompt.pipe(llm).pipe(new String
 const preemptivePromptingChain = preemptivePrompting.pipe(llm).pipe(new StringOutputParser());
 
 //Main function to decide what to do with a message based on the parsed intent
-export async function answerQuestion(message, requesterSessionId = null, preemptive = false) {
+export async function answerQuestion(message, requesterSessionId = null, preemptive = false, threadHistory = []) {
     try {
         const requesterContext = await getRequesterAccessContext(requesterSessionId);
 

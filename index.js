@@ -184,6 +184,20 @@ app.message(/^(help|commands)$/i, async ({ say }) => {
 
 // Main handler for questions directed at the bot in channels
 app.event("app_mention", async ({ event, say, client }) => {
+  const isInThread = !!event.thread_ts;
+  const threadHistory = [];
+  if(isInThread) {
+    const result = await client.conversations.replies({
+      channel: event.channel,
+      ts: event.thread_ts,
+      limit: 5
+    });
+    threadHistory = result.messages.map(m => ({
+      role: m.bot_id ? 'assistant' : 'user',
+      content: m.text
+    }));
+  }
+  
   const profile = db
     .prepare("SELECT * FROM user_profiles WHERE session_id = ?")
     .get(event.user);
@@ -220,10 +234,10 @@ app.event("app_mention", async ({ event, say, client }) => {
   const question = event.text.replace(/<@[^>]+>/, "").trim();
   console.log("User asked a question:", question);
   logInteraction(event.user, question, "reactive");
-  const response = await answerQuestion(question, event.user);
+  const response = await answerQuestion(question, event.user, false, threadHistory);
 
   if (typeof response === 'string') {
-    await say({ text: response });
+    await say({ text: response, thread_ts: isInThread ? event.thread_ts : undefined });
   } else {
     let messageText = response.answer;
 
@@ -234,7 +248,7 @@ app.event("app_mention", async ({ event, say, client }) => {
       });
     }
 
-    await say({ text: messageText });
+    await say({ text: messageText, thread_ts: isInThread ? event.thread_ts : undefined });
   }
 });
 
@@ -274,7 +288,7 @@ app.event("message", async ({ event, say, client }) => {
 
     // Profile exists — answer the question directly (no @ needed in DMs)
     logInteraction(userId, event.text, "reactive");
-    const response = await answerQuestion(event.text, userId);
+    const response = await answerQuestion(event.text, userId, false);
 
     if (typeof response === 'string') {
       await say({ text: response });
