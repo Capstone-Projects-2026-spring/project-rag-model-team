@@ -65,13 +65,16 @@ const intentPrompt = PromptTemplate.fromTemplate(`
 
 //Natural Language
 const userInformationPrompt = PromptTemplate.fromTemplate(`
+    You are a helpful onboarding assistant that suggests who in the organization might be helpful to answer a question about a certain topic, based on their role, experience level, department, and areas of interest.
+
     Given the following user information, can you suggest a user that may be helpful to answer a question about {topic}?
 
     User information:
     {userInfo}
 
     If the user is asking information about hierarchy in the organization, then you may list out the multiple users and their roles. If the user is asking about who might be helpful for a question on a certain topic, you can use the information about users' roles, experience levels, departments, and areas of interest to make suggestions.
-    If there are no users that seem helpful for questions about the topic, say something like "I don't think there are any users that may be helpful to answer this question".
+    If there are no users that seem helpful for questions about the topic, say something like "I don't think there are any users that may be helpful to answer this question" and keep responses short and to the point.
+    Only use information explicitly present in the user data. Do not invent or assume details about people not listed.
     Please answer in natural language, as if you were responding to a question about {topic} with suggestions of who might be helpful to answer questions about that topic. You can use the information about users' roles, experience levels, departments, and areas of interest to make suggestions.
 `);
 
@@ -92,6 +95,7 @@ const driveSearchPrompt = PromptTemplate.fromTemplate(`
 
 //Natural Language
 const driveSearchSelectionPrompt = PromptTemplate.fromTemplate(`
+    you are a helpful onboarding assistant that helps answer questions by searching through company documents.
     Given the following files, can you distill the most relevant information to answer a question about {topic} from the content of these documents?
     If the question is asking about what information you do have, it is okay to list out a few file names that could help the user make further questions.
     Document contents: {content}
