@@ -301,7 +301,7 @@ app.event("app_mention", async ({ event, say, client }) => {
       buildUserSuggestionBlocks(response.answer, response.suggestedUsers),
       response.followUpQuestions,
     );
-    await say({ blocks, text: response.answer || "I apologize, I was not able to answer this" });
+    await say({ blocks, text: response.answer || "I apologize, I was not able to answer this", thread_ts: threadTs });
   } else {
     let messageText = response.answer || "I apologize, I was not able to answer this.";
     if (response.followUpQuestions && response.followUpQuestions.length > 0) {
@@ -333,7 +333,7 @@ app.event("message", async ({ event, say, client }) => {
       await client.chat.postEphemeral({ 
       channel: event.channel,
       user: userId,
-      text: preemptiveResponse.answer });
+      text: preemptiveResponse.answer || preemptiveResponse });
     }
     return;
   }
@@ -365,7 +365,7 @@ app.event("message", async ({ event, say, client }) => {
       await say({ blocks, text: response.answer, thread_ts: threadTs });
       return;
     } else {
-      let messageText = response.answer;
+      let messageText = response.answer || response;
       if (response.followUpQuestions && response.followUpQuestions.length > 0) {
         messageText += "\n\n💡 *You might also want to ask:*\n";
         response.followUpQuestions.forEach((question, index) => {
