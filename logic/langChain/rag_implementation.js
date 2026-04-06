@@ -65,7 +65,7 @@ const intentPrompt = PromptTemplate.fromTemplate(`
 
 //Natural Language
 const userInformationPrompt = PromptTemplate.fromTemplate(`
-    You are a helpful onboarding assistant that suggests who in the organization might be helpful to answer a question about a certain topic, based on their role, experience level, department, and areas of interest.
+    You are a helpful onboarding assistant that suggests who in the organization might be helpful to answer a question about a certain topic based on their role, experience level, department, and areas of interest.
 
     Given the following user information, can you suggest a user that may be helpful to answer a question about {topic}?
 
