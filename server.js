@@ -1,7 +1,7 @@
 const express = require("express");
 const appServer = express();
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 4000;
 
 appServer.get("/", (req, res) => {
   res.send("Slack bot is running");
