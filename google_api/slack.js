@@ -1,3 +1,6 @@
+  
+import fs from "fs";
+import { logAndUploadFeedback } from "../logic/logAndUploadFeedback.js";
 import * as driveService from "./driveService.js";
 
 export default function (app) {
@@ -154,5 +157,42 @@ export default function (app) {
         }
       ]
     });
+  });
+
+  // Command to collect feedback and write to feedback.txt
+  app.command("/give-feedback", async ({ ack, body, respond }) => {
+    await ack();
+    const feedback = body.text?.trim();
+    if (!feedback) {
+      await respond("Please provide feedback after the command, e.g. `/give-feedback This is my feedback`.");
+      return;
+    }
+    const user = body.user_name || body.user_id || "unknown";
+    try {
+      await logAndUploadFeedback(user, feedback);
+      await respond("✅ Thank you for your feedback! It has been recorded and uploaded to the feedback log.");
+    } catch (err) {
+      await respond("❌ Failed to record or upload feedback. Please try again later.");
+    }
+  });
+  // Command to get all feedback
+  app.command("/get-feedback", async ({ ack, respond }) => {
+    await ack();
+    try {
+      const content = fs.readFileSync("feedback.txt", "utf8");
+      if (!content.trim()) {
+        await respond("No feedback has been recorded yet.");
+      } else {
+        // If content is too long for Slack, send only the last 3000 characters
+        const maxLen = 3000;
+        const display = content.length > maxLen ? content.slice(-maxLen) : content;
+        await respond({
+          text: `*Feedback log:*\n\n\`\`\`${display}\`\`\``,
+          mrkdwn: true
+        });
+      }
+    } catch (err) {
+      await respond("❌ Could not read feedback file.");
+    }
   });
 }

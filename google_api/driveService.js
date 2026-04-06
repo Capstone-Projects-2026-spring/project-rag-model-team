@@ -16,7 +16,7 @@ try {
     const keyFile = JSON.parse(fs.readFileSync(SERVICE_ACCOUNT_KEY_PATH, 'utf8'));
     auth = new google.auth.GoogleAuth({
       credentials: keyFile,
-      scopes: ['https://www.googleapis.com/auth/drive.readonly']
+      scopes: ['https://www.googleapis.com/auth/drive.file']
     });
     isInitialized = true;
     console.log('✅ Service account loaded successfully');

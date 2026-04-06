@@ -3,6 +3,7 @@ import dotenv from 'dotenv';
 import { queryGraphQL } from './logic/graphql_setup/graphql_client.js';
 import slackHandlers from './google_api/slack.js';
 import { answerQuestion } from './logic/langChain/rag_implementation.js';
+import { logAndUploadFeedback } from './logic/logAndUploadFeedback.js';
 import { initDatabase } from './logic/database/sqlite.js';
 
 dotenv.config();
@@ -127,6 +128,7 @@ app.event('app_mention', async ({ event, say }) => {
     text: responseText,
     blocks: [
       { type: "section", text: { type: "mrkdwn", text: responseText } },
+        { type: "section", text: { type: "mrkdwn", text: "*Was this helpful?*" } },
       {
         type: "actions",
         elements: [
@@ -193,6 +195,7 @@ app.event('message', async ({ event, say }) => {
         text: responseText,
         blocks: [
           { type: "section", text: { type: "mrkdwn", text: responseText } },
+            { type: "section", text: { type: "mrkdwn", text: "*Was this helpful?*" } },
           {
             type: "actions",
             elements: [
@@ -227,9 +230,15 @@ app.event('message', async ({ event, say }) => {
     } catch (e) {
       feedbackData = { user: body.user.id, feedback: action.action_id === 'feedback_yes' ? 'yes' : 'no' };
     }
-    // Store feedback (for demo, just log it; replace with DB/store as needed)
-    console.log('Feedback received:', feedbackData);
-    // Optionally, update the message to thank the user
+    try {
+      await logAndUploadFeedback(
+        feedbackData.user,
+        feedbackData.feedback,
+        { question: feedbackData.question, response: feedbackData.responseText }
+      );
+    } catch (err) {
+      console.error('Failed to log/upload helpful feedback:', err);
+    }
     await client.chat.update({
       channel: body.channel.id,
       ts: body.message.ts,
