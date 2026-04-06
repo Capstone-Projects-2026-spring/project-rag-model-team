@@ -120,6 +120,7 @@ const driveSearchPrompt = PromptTemplate.fromTemplate(`
 
 //Natural Language
 const driveSearchSelectionPrompt = PromptTemplate.fromTemplate(`
+    you are a helpful onboarding assistant that helps answer questions by searching through company documents.
     Given the following files, can you distill the most relevant information to answer a question about {topic} from the content of these documents?
     If the question is asking about what information you do have, it is okay to list out a few file names that could help the user make further questions.
     Document contents: {content}
