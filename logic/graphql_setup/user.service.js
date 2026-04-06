@@ -1,18 +1,18 @@
-import db from '../database/sqlite.js';
+import { getAll, getOne, runQuery } from '../database/sqlite.js';
 
 export function getAllUsers() {
-  return db.prepare(`
+  return getAll(`
     SELECT id, created_at
     FROM user_profiles
-  `).all();
+  `);
 }
 
 export function getUserByID(id) {
-  return db.prepare(`
+  return getOne(`
         SELECT id, created_at
         FROM user_profiles
         WHERE id = ?
-    `).get(id);
+    `, [id]);
 }
 
 export function health() {
@@ -24,16 +24,14 @@ export function profile() {
     const sessionId = req.session.id;
 
     // Check if profile exists
-    let profile = db.prepare('SELECT * FROM user_profiles WHERE session_id = ?', [sessionId]);
+    let profile = getOne('SELECT * FROM user_profiles WHERE session_id = ?', [sessionId]);
 
     if (!profile) {
-      // Create new profile
-      const result = db.prepare('INSERT INTO user_profiles (session_id) VALUES (?)', [sessionId]);
-      profile = db.prepare('SELECT * FROM user_profiles WHERE id = ?', [result.lastInsertRowid]);
+      runQuery('INSERT INTO user_profiles (session_id) VALUES (?)', [sessionId]);
+      profile = getOne('SELECT * FROM user_profiles WHERE session_id = ?', [sessionId]);
     }
 
-    // Get user info if exists
-    const userInfo = db.prepare('SELECT * FROM user_info WHERE profile_id = ?', [profile.id]);
+    const userInfo = getOne('SELECT * FROM user_info WHERE profile_id = ?', [profile.id]);
 
     res.json({
       profile,
