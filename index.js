@@ -315,14 +315,14 @@ app.event("message", async ({ event, say, client }) => {
                 type: "button",
                 text: { type: "plain_text", text: "Yes" },
                 style: "primary",
-                value: JSON.stringify({ user: userId, question: text, response, feedback: "yes" }),
+                value: JSON.stringify({ user: userId, question: event.text, response, feedback: "yes" }),
                 action_id: "feedback_yes"
               },
               {
                 type: "button",
                 text: { type: "plain_text", text: "No" },
                 style: "danger",
-                value: JSON.stringify({ user: userId, question: text, response, feedback: "no" }),
+                value: JSON.stringify({ user: userId, question: event.text, response, feedback: "no" }),
                 action_id: "feedback_no"
               }
             ]
