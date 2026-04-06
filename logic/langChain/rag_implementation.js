@@ -32,19 +32,40 @@ async function streamToString(stream) {
   return Buffer.concat(chunks).toString('utf8');
 }
 
-// Helper function to extract JSON array from LLM response
-function extractJSONArray(text) {
-  // Try to find JSON array in the text
-  const jsonMatch = text.match(/\[.*\]/s);
-  if (jsonMatch) {
-    try {
-      return JSON.parse(jsonMatch[0]);
-    } catch (e) {
-      // If parsing fails, return empty array
-      return [];
+// Helper function to extract JSON object from LLM response
+function extractJSON(text) {
+  const cleaned = text
+    .replace(/```json/g, '')
+    .replace(/```/g, '')
+    .trim();
+
+  // Find whichever comes first — { or [
+  const objStart = cleaned.indexOf('{');
+  const arrStart = cleaned.indexOf('[');
+
+  let start;
+  if (objStart === -1 && arrStart === -1) return null;
+  if (objStart === -1) start = arrStart;
+  else if (arrStart === -1) start = objStart;
+  else start = Math.min(objStart, arrStart);
+
+  const openChar  = cleaned[start] === '{' ? '{' : '[';
+  const closeChar = cleaned[start] === '{' ? '}' : ']';
+
+  let depth = 0;
+  for (let i = start; i < cleaned.length; i++) {
+    if (cleaned[i] === openChar)  depth++;
+    if (cleaned[i] === closeChar) depth--;
+
+    if (depth === 0) {
+      try {
+        return JSON.parse(cleaned.slice(start, i + 1));
+      } catch (e) {
+        return null;
+      }
     }
   }
-  return [];
+  return null;
 }
 
 //All the prompt templates used
@@ -168,7 +189,8 @@ async function parseIntent(message) {
     const result = await intentChain.invoke({ message });
     console.log("Raw intent result:", result);
     try {
-      return JSON.parse(stripCodeFences(result));
+      const parsed = extractJSON(result);
+      return parsed || { type: 'GENERAL' };
     } catch (jsonError) {
       console.warn("Intent parse JSON failed, defaulting GENERAL; result:", result, jsonError);
       return { type: 'GENERAL' };
@@ -184,7 +206,7 @@ async function suggestUserForTopic(userInfo, topic) {
   console.log("Raw user suggestion result:", result);
 
   try {
-    const parsed = JSON.parse(stripCodeFences(result));
+    const parsed = extractJSON(result);
     if (parsed && Array.isArray(parsed.suggestions)) {
       return {
         suggestions: parsed.suggestions,
@@ -280,15 +302,17 @@ export async function autoClassifyDocument(file) {
       excerpt = fullContent.slice(0, 500);
     }
     const result = await autoClassifyChain.invoke({ name: file.name, excerpt: excerpt });
-    const parsed = JSON.parse(stripCodeFences(result));
-    return {
-      classification_level: normalizeClassification(parsed.classification_level),
-      tags: Array.isArray(parsed.tags) ? parsed.tags.map(t => String(t).toLowerCase()) : [],
-    };
+    const parsed = extractJSON(result);
+    if (parsed) {
+      return {
+        classification_level: normalizeClassification(parsed.classification_level),
+        tags: Array.isArray(parsed.tags) ? parsed.tags.map(t => String(t).toLowerCase()) : [],
+      };
+    }
   } catch (error) {
     console.warn(`Auto-classify failed for "${file.name}":`, error.message);
-    return { classification_level: 'internal', tags: [] };
   }
+  return { classification_level: 'internal', tags: [] };
 }
 
 /**
@@ -339,7 +363,7 @@ async function searchDriveForTopic(topic, requesterContext, preemptive = false) 
 
   let fileSuggestions;
   try {
-    fileSuggestions = extractJSONArray(fileSuggestionsString);
+    fileSuggestions = extractJSON(fileSuggestionsString);
   } catch (error) {
     console.error("Error parsing file suggestions JSON:", error);
     return "Sorry, I couldn't find relevant information in our documents.";
@@ -417,7 +441,8 @@ async function generateFollowUpQuestions(originalQuestion, answer, intentType) {
     console.log("Raw follow-up questions result:", result);
     
     try {
-      const questions = JSON.parse(result);
+      const questions = extractJSON(result);
+      console.log("Parsed follow-up questions:", questions);
       if (Array.isArray(questions) && questions.length > 0) {
         // Limit to 5 questions max
         return questions.slice(0, 5);
@@ -533,7 +558,8 @@ export async function answerQuestion(message, requesterSessionId = null, preempt
         console.error("Error in answerQuestion:", error);
         return {
             answer: "Sorry, I couldn't understand your question. Please try rephrasing it.",
-            followUpQuestions: []
+            followUpQuestions: [],
+            suggestedUsers: [],
         };
     }
 }
