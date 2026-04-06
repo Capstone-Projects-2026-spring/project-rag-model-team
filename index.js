@@ -227,7 +227,7 @@ app.event("app_mention", async ({ event, say, client }) => {
     await say({ 
       text: response, 
       blocks: [
-      { type: "section", text: { type: "mrkdwn", text: responseText } },
+      { type: "section", text: { type: "mrkdwn", text: response } },
         { type: "section", text: { type: "mrkdwn", text: "*Was this helpful?*" } },
       {
         type: "actions",
@@ -236,14 +236,14 @@ app.event("app_mention", async ({ event, say, client }) => {
             type: "button",
             text: { type: "plain_text", text: "Yes" },
             style: "primary",
-            value: JSON.stringify({ user: event.user, question, responseText, feedback: "yes" }),
+            value: JSON.stringify({ user: event.user, question, response, feedback: "yes" }),
             action_id: "feedback_yes"
           },
           {
             type: "button",
             text: { type: "plain_text", text: "No" },
             style: "danger",
-            value: JSON.stringify({ user: event.user, question, responseText, feedback: "no" }),
+            value: JSON.stringify({ user: event.user, question, response, feedback: "no" }),
             action_id: "feedback_no"
           }
         ]
@@ -306,7 +306,7 @@ app.event("message", async ({ event, say, client }) => {
       await say({ 
         text: response, 
         blocks: [
-          { type: "section", text: { type: "mrkdwn", text: responseText } },
+          { type: "section", text: { type: "mrkdwn", text: response } },
             { type: "section", text: { type: "mrkdwn", text: "*Was this helpful?*" } },
           {
             type: "actions",
@@ -315,14 +315,14 @@ app.event("message", async ({ event, say, client }) => {
                 type: "button",
                 text: { type: "plain_text", text: "Yes" },
                 style: "primary",
-                value: JSON.stringify({ user: userId, question: text, responseText, feedback: "yes" }),
+                value: JSON.stringify({ user: userId, question: text, response, feedback: "yes" }),
                 action_id: "feedback_yes"
               },
               {
                 type: "button",
                 text: { type: "plain_text", text: "No" },
                 style: "danger",
-                value: JSON.stringify({ user: userId, question: text, responseText, feedback: "no" }),
+                value: JSON.stringify({ user: userId, question: text, response, feedback: "no" }),
                 action_id: "feedback_no"
               }
             ]
@@ -356,7 +356,7 @@ app.event("message", async ({ event, say, client }) => {
       await logAndUploadFeedback(
         feedbackData.user,
         feedbackData.feedback,
-        { question: feedbackData.question, response: feedbackData.responseText }
+        { question: feedbackData.question, response: feedbackData.response }
       );
     } catch (err) {
       console.error('Failed to log/upload helpful feedback:', err);
