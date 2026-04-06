@@ -156,6 +156,60 @@ function getIntakeButtonBlocks() {
   ];
 }
 
+function buildUserSuggestionBlocks(answer, suggestedUsers) {
+  const blocks = [
+    {
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: answer,
+      },
+    },
+  ];
+  console.log("Building user suggestion blocks for:", suggestedUsers);
+  if (Array.isArray(suggestedUsers) && suggestedUsers.length > 0) {
+    blocks.push({ type: "divider" });
+
+    suggestedUsers.slice(0, 5).forEach((user) => {
+      const labelParts = [user.role, user.department].filter(Boolean);
+      blocks.push({
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: `*${user.name}*${labelParts.length ? ` • ${labelParts.join(" • ")}` : ""}${user.reason ? `\n_${user.reason}_` : ""}`,
+        },
+        accessory: {
+          type: "button",
+          text: { type: "plain_text", text: "Start group chat", emoji: true },
+          action_id: "start_groupchat",
+          value: JSON.stringify({
+            targetSessionId: user.session_id,
+            topic: user.reason || "a topic you asked about",
+          }),
+        },
+      });
+    });
+  }
+  console.log("Constructed blocks:", JSON.stringify(blocks, null, 2));
+  return blocks;
+}
+
+function appendFollowUpQuestions(blocks, followUpQuestions) {
+  if (Array.isArray(followUpQuestions) && followUpQuestions.length > 0) {
+    blocks.push({ type: "divider" });
+    blocks.push({
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: `*You might also want to ask:*
+${followUpQuestions.map((question, index) => `${index + 1}. ${question}`).join("\n")}`,
+      },
+    });
+  }
+
+  return blocks;
+}
+
 // ================ Basic Bot Handlers =====================
 
 app.event("reaction_added", async ({ event, client }) => {
@@ -220,20 +274,22 @@ app.event("app_mention", async ({ event, say, client }) => {
   const question = event.text.replace(/<@[^>]+>/, "").trim();
   console.log("User asked a question:", question);
   logInteraction(event.user, question, "reactive");
-  const response = await answerQuestion(question, event.user);
+  const response = await answerQuestion(question, event.user, false);
 
-  if (typeof response === 'string') {
-    await say({ text: response });
+  if (Array.isArray(response.suggestedUsers) && response.suggestedUsers.length > 0) {
+    const blocks = appendFollowUpQuestions(
+      buildUserSuggestionBlocks(response.answer, response.suggestedUsers),
+      response.followUpQuestions,
+    );
+    await say({ blocks, text: response.answer });
   } else {
     let messageText = response.answer;
-
     if (response.followUpQuestions && response.followUpQuestions.length > 0) {
       messageText += "\n\n💡 *You might also want to ask:*\n";
       response.followUpQuestions.forEach((question, index) => {
         messageText += `${index + 1}. ${question}\n`;
       });
     }
-
     await say({ text: messageText });
   }
 });
@@ -245,7 +301,10 @@ app.event("message", async ({ event, say, client }) => {
       return;
   }
   const userId = event.user;
-  if (event.channel_type !== "im" && event.action !== "app_mention") {
+  if (event.subtype === 'message_changed') return;
+  if (event.channel_type !== 'im' && event.text?.includes(`<@${BOT_USER_ID}>`)) return;
+  if (event.channel_type !== "im") {
+    console.log("Event Informaiton", event);
     const preemptiveResponse = await answerQuestion(event.text, event.user, true);
     console.log("Preemptive response:", preemptiveResponse);
     if (preemptiveResponse) {
@@ -274,25 +333,30 @@ app.event("message", async ({ event, say, client }) => {
 
     // Profile exists — answer the question directly (no @ needed in DMs)
     logInteraction(userId, event.text, "reactive");
-    const response = await answerQuestion(event.text, userId);
-
-    if (typeof response === 'string') {
-      await say({ text: response });
+    const response = await answerQuestion(event.text, userId, false);
+    
+    if (Array.isArray(response.suggestedUsers) && response.suggestedUsers.length > 0) {
+      const blocks = appendFollowUpQuestions(
+        buildUserSuggestionBlocks(response.answer, response.suggestedUsers),
+        response.followUpQuestions,
+      );
+      await say({ blocks, text: response.answer });
+      return;
     } else {
       let messageText = response.answer;
-
       if (response.followUpQuestions && response.followUpQuestions.length > 0) {
         messageText += "\n\n💡 *You might also want to ask:*\n";
         response.followUpQuestions.forEach((question, index) => {
           messageText += `${index + 1}. ${question}\n`;
         });
       }
-
       await say({ text: messageText });
+      return;
     }
   } catch (error) {
     console.error("Error handling DM:", error);
     await say("Sorry, I encountered an error. Please try again.");
+    return;
   }
 });
 
@@ -307,6 +371,65 @@ app.action("open_intake_modal", async ({ ack, body, client }) => {
     });
   } catch (error) {
     console.error("Error opening modal:", error);
+  }
+});
+
+app.action('start_groupchat', async ({ ack, body, client }) => {
+  await ack();
+  console.log("Starting group chat with action value:", body.actions[0].value);
+  const channelOrDM = body.channel?.id || body.user.id; // ✅ handles DMs
+
+  let payload;
+  try {
+    payload = JSON.parse(body.actions[0].value);
+  } catch (error) {
+    console.error('Failed to parse group chat action value:', error);
+    await client.chat.postEphemeral({
+      channel: channelOrDM,
+      user: body.user.id,
+      text: 'Sorry, I couldn\'t start the group chat due to an internal error.',
+    });
+    return;
+  }
+
+  const requesterId = body.user.id;
+  const targetSessionId = payload.targetSessionId;
+  const topic = payload.topic || 'a topic you asked about';
+
+  if (!targetSessionId || targetSessionId === requesterId) {
+    await client.chat.postEphemeral({
+      channel: channelOrDM,
+      user: requesterId,
+      text: 'I couldn\'t start the group chat because the selected user is invalid.',
+    });
+    return;
+  }
+
+  try {
+    const openResult = await client.conversations.open({
+      users: `${requesterId},${targetSessionId}`,
+    });
+
+    const gcChannelId = openResult.channel?.id;
+    if (!gcChannelId) throw new Error('No channel returned from conversations.open');
+
+    await client.chat.postMessage({
+      channel: gcChannelId,
+      text: `Hi <@${targetSessionId}> and <@${requesterId}>! I created this group chat to connect you via Keystone Bot about ${topic}.`,
+    });
+
+    await client.chat.postEphemeral({
+      channel: channelOrDM, // ✅ fixed
+      user: requesterId,
+      text: `✅ Group chat created with <@${targetSessionId}>.`,
+    });
+  } catch (error) {
+    console.error('Error creating group chat:', error);
+    await client.chat.postEphemeral({
+      channel: channelOrDM, // ✅ fixed
+      user: requesterId,
+      text: 'Sorry, I couldn\'t create the group chat. Please try again.',
+    });
   }
 });
 
@@ -568,11 +691,13 @@ function getIntakeModal() {
 }
 
 // ============= Start the Bot =============
-
+let BOT_USER_ID;
 (async () => {
   db = initDatabase();
   startGraphQL();
   await app.start();
+  const auth = await app.client.auth.test();
+  BOT_USER_ID = auth.user_id;
   console.log("⚡️ Slack bot is running in socket mode!");
 })();
 
