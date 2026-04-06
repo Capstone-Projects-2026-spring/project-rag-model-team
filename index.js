@@ -156,6 +156,10 @@ function getIntakeButtonBlocks() {
   ];
 }
 
+function getThreadTs(event) {
+  return event.thread_ts || event.ts;
+}
+
 function buildUserSuggestionBlocks(answer, suggestedUsers) {
   const blocks = [
     {
@@ -238,6 +242,20 @@ app.message(/^(help|commands)$/i, async ({ say }) => {
 
 // Main handler for questions directed at the bot in channels
 app.event("app_mention", async ({ event, say, client }) => {
+  const isInThread = !!event.thread_ts;
+  let threadHistory = [];
+  if(isInThread) {
+    const result = await client.conversations.replies({
+      channel: event.channel,
+      ts: event.thread_ts,
+      limit: 5
+    });
+    threadHistory = result.messages.map(m => ({
+      role: m.bot_id ? 'assistant' : 'user',
+      content: m.text
+    }));
+  }
+  
   const profile = db
     .prepare("SELECT * FROM user_profiles WHERE session_id = ?")
     .get(event.user);
@@ -274,23 +292,26 @@ app.event("app_mention", async ({ event, say, client }) => {
   const question = event.text.replace(/<@[^>]+>/, "").trim();
   console.log("User asked a question:", question);
   logInteraction(event.user, question, "reactive");
-  const response = await answerQuestion(question, event.user, false);
+  console.log("Thread history for context:", threadHistory);
+  const response = await answerQuestion(question, event.user, false, threadHistory);
 
+  const threadTs = getThreadTs(event);
   if (Array.isArray(response.suggestedUsers) && response.suggestedUsers.length > 0) {
     const blocks = appendFollowUpQuestions(
       buildUserSuggestionBlocks(response.answer, response.suggestedUsers),
       response.followUpQuestions,
     );
-    await say({ blocks, text: response.answer });
+    await say({ blocks, text: response.answer || "I apologize, I was not able to answer this" });
   } else {
-    let messageText = response.answer;
+    let messageText = response.answer || "I apologize, I was not able to answer this.";
     if (response.followUpQuestions && response.followUpQuestions.length > 0) {
       messageText += "\n\n💡 *You might also want to ask:*\n";
       response.followUpQuestions.forEach((question, index) => {
         messageText += `${index + 1}. ${question}\n`;
       });
     }
-    await say({ text: messageText });
+
+    await say({ text: messageText, thread_ts: threadTs });
   }
 });
 
@@ -334,13 +355,14 @@ app.event("message", async ({ event, say, client }) => {
     // Profile exists — answer the question directly (no @ needed in DMs)
     logInteraction(userId, event.text, "reactive");
     const response = await answerQuestion(event.text, userId, false);
+    const threadTs = getThreadTs(event);
     
     if (Array.isArray(response.suggestedUsers) && response.suggestedUsers.length > 0) {
       const blocks = appendFollowUpQuestions(
         buildUserSuggestionBlocks(response.answer, response.suggestedUsers),
         response.followUpQuestions,
       );
-      await say({ blocks, text: response.answer });
+      await say({ blocks, text: response.answer, thread_ts: threadTs });
       return;
     } else {
       let messageText = response.answer;
@@ -350,7 +372,7 @@ app.event("message", async ({ event, say, client }) => {
           messageText += `${index + 1}. ${question}\n`;
         });
       }
-      await say({ text: messageText });
+      await say({ text: messageText, thread_ts: threadTs });
       return;
     }
   } catch (error) {

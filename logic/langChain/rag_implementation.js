@@ -120,11 +120,20 @@ const driveSearchPrompt = PromptTemplate.fromTemplate(`
 
 //Natural Language
 const driveSearchSelectionPrompt = PromptTemplate.fromTemplate(`
-    you are a helpful onboarding assistant that helps answer questions by searching through company documents.
-    Given the following files, can you distill the most relevant information to answer a question about {topic} from the content of these documents?
-    If the question is asking about what information you do have, it is okay to list out a few file names that could help the user make further questions.
-    Document contents: {content}
-    Please answer the question about {topic} using only the information from these documents. If you don't have enough information to answer, say "IDK" and only "IDK".
+  You are a helpful onboarding assistant helping new employees learn about the company.
+  
+  A user has asked: {topic}
+  
+  Your job is to distill the most relevant information from the document contents below and provide a helpful, direct answer.
+  Using ONLY the document contents below, provide a helpful and direct answer.
+  - Summarize the most relevant information clearly
+  - If the documents contain project details, team info, or descriptions, share them
+  - Do not mention file names or links unless the user specifically asks for them
+  - If there is truly no relevant information, say "I don't have enough information about that yet"
+  - Keep your answer under 100 words
+  
+  Document contents:
+  {content}
 `);
 
 //JSON ONLY — used to auto-classify documents with no existing metadata tags
@@ -182,6 +191,27 @@ const preemptivePrompting = PromptTemplate.fromTemplate(`
     If you cannot make any suggestions based on the content of the message, please say "IDK" and only "IDK".
 `);
 
+const threadHistoryPrompt = PromptTemplate.fromTemplate(`
+  You are checking if a question can be DIRECTLY answered from previous conversation history.
+  
+  Message: {message}
+  Thread History: {threadHistory}
+
+  Rules:
+  - ONLY return threadAnswer: true if the thread history EXPLICITLY contains the answer
+  - If the answer is vague, implied, or uncertain — return threadAnswer: false
+  - If the thread history is empty — return threadAnswer: false
+  - If you are not 100% sure — return threadAnswer: false
+  - Answers must be under 40 words
+
+  Return JSON only, no explanation, no markdown:
+  
+  If answer found:
+  {{"threadAnswer": true, "answer": "answer from thread history"}}
+  
+  If answer NOT found:
+  {{"threadAnswer": false}}
+`);
 //Functions to call the chains and decide what to do with the results
 
 async function parseIntent(message) {
@@ -419,16 +449,18 @@ async function searchDriveForTopic(topic, requesterContext, preemptive = false) 
 
 async function answerDriveSearchQuestion(fileContents, topic) {
   try {
-        const finalAnswer = await driveSearchSelectionChain.invoke({ content: fileContents, topic });
-        if (finalAnswer.trim() === "IDK") {
-            return "Sorry, I couldn't find relevant information in our documents.";
-        } else {
-            return finalAnswer;
-        }
-    } catch (error) {
-        console.error("Error invoking driveSearchSelectionChain:", error);
-        return "Sorry, I couldn't process the information from the documents.";
+    console.log("FileContents being sent to driveSearchSelectionChain:", fileContents);
+    const finalAnswer = await driveSearchSelectionChain.invoke({ content: fileContents, topic });
+    console.log("Final answer from driveSearchSelectionChain:", finalAnswer);
+    if (finalAnswer.trim() === "IDK") {
+      return "Sorry, I couldn't find relevant information in our documents.";
+    } else {
+      return finalAnswer;
     }
+  } catch (error) {
+      console.error("Error invoking driveSearchSelectionChain:", error);
+      return "Sorry, I couldn't process the information from the documents.";
+  }
 }
 
 async function generateFollowUpQuestions(originalQuestion, answer, intentType) {
@@ -468,14 +500,34 @@ const driveSearchSelectionChain = driveSearchSelectionPrompt.pipe(llm).pipe(new 
 const autoClassifyChain = autoClassifyPrompt.pipe(llm).pipe(new StringOutputParser());
 const followUpQuestionsChain = followUpQuestionsPrompt.pipe(llm).pipe(new StringOutputParser());
 const preemptivePromptingChain = preemptivePrompting.pipe(llm).pipe(new StringOutputParser());
+const threadHistoryChain = threadHistoryPrompt.pipe(llm).pipe(new StringOutputParser());
 
 //Main function to decide what to do with a message based on the parsed intent
-export async function answerQuestion(message, requesterSessionId = null, preemptive = false) {
+export async function answerQuestion(message, requesterSessionId = null, preemptive = false, threadHistory = []) {
     try {
         const requesterContext = await getRequesterAccessContext(requesterSessionId);
 
         if (isGreetingMessage(message)) {
             return buildGreetingResponse(requesterContext);
+        }
+
+        if(threadHistory.length > 0) {
+          const threadHistoryResult = await threadHistoryChain.invoke({
+            message,
+            threadHistory: JSON.stringify(threadHistory)
+          });
+          console.log("Thread history chain result:", threadHistoryResult);
+          try {
+            const parsedThreadResult = extractJSON(threadHistoryResult);
+            
+            if (parsedThreadResult?.threadAnswer) {
+              const ans = {"answer": parsedThreadResult?.answer};
+              console.log("Answer found in thread history", ans);
+              return ans;
+            }
+          } catch (error) {
+            console.warn("Error parsing thread history chain result, proceeding with normal flow:", error);
+          }
         }
 
         const intent = await parseIntent(message);
