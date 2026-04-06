@@ -124,6 +124,7 @@ const driveSearchSelectionPrompt = PromptTemplate.fromTemplate(`
   
   A user has asked: {topic}
   
+  Your job is to distill the most relevant information from the document contents below and provide a helpful, direct answer.
   Using ONLY the document contents below, provide a helpful and direct answer.
   - Summarize the most relevant information clearly
   - If the documents contain project details, team info, or descriptions, share them

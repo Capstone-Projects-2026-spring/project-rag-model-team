@@ -234,8 +234,10 @@ describe("answerQuestion access filtering", () => {
     const response = await answerQuestion(
       "Show me the architecture docs",
       "U_REQUESTER",
+      false,
+      []
     );
-
+    console.log("Final response:", response);
     expect(response.answer).toBe("Architecture guide summary");
     expect(response.followUpQuestions).toEqual([]);
     expect(chainHandlers.driveSearch).toHaveBeenCalledTimes(1);
