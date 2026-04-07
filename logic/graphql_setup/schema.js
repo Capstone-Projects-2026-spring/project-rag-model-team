@@ -21,6 +21,8 @@ export default buildSchema(`
     profile_id: ID
     name: String
     email: String
+    github_username: String
+    active_github_repo: String
     role: String
     classification_level: String
     experience_level: String
@@ -80,6 +82,8 @@ export default buildSchema(`
     session_id: String!
     name: String
     email: String
+    github_username: String
+    active_github_repo: String
     role: String!
     experience_level: String!
     department: String

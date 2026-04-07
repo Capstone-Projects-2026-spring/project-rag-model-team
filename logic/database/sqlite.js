@@ -34,6 +34,12 @@ function runMigrations() {
 
     const columns = db.pragma('table_info(user_info)');
     const hasSessionId = columns.some((column) => column.name === 'session_id');
+    const hasGitHubUsername = columns.some(
+      (column) => column.name === 'github_username',
+    );
+    const hasActiveGitHubRepo = columns.some(
+      (column) => column.name === 'active_github_repo',
+    );
     const hasClassificationLevel = columns.some(
       (column) => column.name === 'classification_level',
     );
@@ -60,6 +66,22 @@ function runMigrations() {
 
       console.log('Migration completed: classification_level column added');
     }
+    if (!hasGitHubUsername) {
+      console.log('Adding github_username column to user_info table...');
+      db.prepare("ALTER TABLE user_info ADD COLUMN github_username TEXT").run();
+      console.log('Migration completed: github_username column added');
+    }
+    if (!hasActiveGitHubRepo) {
+      console.log('Adding active_github_repo column to user_info table...');
+      db.prepare("ALTER TABLE user_info ADD COLUMN active_github_repo TEXT").run();
+      console.log('Migration completed: active_github_repo column added');
+    }
+    db.prepare(
+      'CREATE INDEX IF NOT EXISTS idx_user_info_github_username ON user_info(github_username)',
+    ).run();
+    db.prepare(
+      'CREATE INDEX IF NOT EXISTS idx_user_info_active_github_repo ON user_info(active_github_repo)',
+    ).run();
 
     const interactionColumns = db.pragma('table_info(user_interactions)');
     const hasMessageColumn = interactionColumns.some((col) => col.name === 'message');
@@ -87,6 +109,73 @@ function runMigrations() {
         CREATE INDEX IF NOT EXISTS idx_doc_tags_classification ON document_tags(classification_level);
       `);
       console.log('Migration completed: document_tags table created');
+    }
+
+    const githubReposExists = tables.some((t) => t.name === 'github_repositories');
+    if (!githubReposExists) {
+      console.log('Creating github_repositories table...');
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS github_repositories (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          full_name TEXT UNIQUE NOT NULL,
+          owner TEXT NOT NULL,
+          name TEXT NOT NULL,
+          default_branch TEXT,
+          synced_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_github_repositories_full_name ON github_repositories(full_name);
+      `);
+      console.log('Migration completed: github_repositories table created');
+    }
+
+    const githubContributorsExists = tables.some((t) => t.name === 'github_contributors');
+    if (!githubContributorsExists) {
+      console.log('Creating github_contributors table...');
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS github_contributors (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          repo_id INTEGER NOT NULL,
+          github_login TEXT NOT NULL,
+          github_name TEXT,
+          total_commits INTEGER NOT NULL DEFAULT 0,
+          commits_last_15_days INTEGER NOT NULL DEFAULT 0,
+          commits_last_30_days INTEGER NOT NULL DEFAULT 0,
+          commits_last_90_days INTEGER NOT NULL DEFAULT 0,
+          commits_last_180_days INTEGER NOT NULL DEFAULT 0,
+          recent_commits INTEGER NOT NULL DEFAULT 0,
+          last_commit_at DATETIME,
+          touched_files TEXT NOT NULL DEFAULT '[]',
+          recent_messages TEXT NOT NULL DEFAULT '[]',
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE(repo_id, github_login),
+          FOREIGN KEY (repo_id) REFERENCES github_repositories(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_github_contributors_repo_id ON github_contributors(repo_id);
+        CREATE INDEX IF NOT EXISTS idx_github_contributors_login ON github_contributors(github_login);
+      `);
+      console.log('Migration completed: github_contributors table created');
+    }
+
+    const githubContributorColumns = db.pragma('table_info(github_contributors)');
+    const timeWindowColumns = [
+      ['commits_last_15_days', '0'],
+      ['commits_last_30_days', '0'],
+      ['commits_last_90_days', '0'],
+      ['commits_last_180_days', '0'],
+    ];
+
+    for (const [columnName, defaultValue] of timeWindowColumns) {
+      const hasColumn = githubContributorColumns.some((column) => column.name === columnName);
+      if (!hasColumn) {
+        console.log(`Adding ${columnName} column to github_contributors table...`);
+        db.prepare(
+          `ALTER TABLE github_contributors ADD COLUMN ${columnName} INTEGER NOT NULL DEFAULT ${defaultValue}`,
+        ).run();
+        console.log(`Migration completed: ${columnName} column added`);
+      }
     }
   } catch (error) {
     console.error('Migration failed:', error.message);
