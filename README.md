@@ -44,6 +44,10 @@ To develop and run this project locally, the following hardware, operating syste
   - macOS
   - Linux
 
+## For QA Testers
+
+Please email William Sims (tup79084@temple.edu) to get access to our slack environment where we will have the project hosted!
+
 ## Starting the Slack Bot
 
 ```bash
