@@ -624,6 +624,7 @@ export async function answerQuestion(
     let answer = "";
     let intentType = "";
     let suggestedUsers = [];
+    let githubSyncContext = null;
 
     //This takes care of all user information retrieval
     if (intent.type === "GET_USER" || intent.action === "GET_USER") {
@@ -664,8 +665,10 @@ export async function answerQuestion(
         if (githubRecommendations.suggestedUsers.length > 0) {
           answer = githubRecommendations.answer;
           suggestedUsers = githubRecommendations.suggestedUsers;
+          githubSyncContext = githubRecommendations.syncContext || null;
         } else if (githubRecommendations.answer) {
           answer = githubRecommendations.answer;
+          githubSyncContext = githubRecommendations.syncContext || null;
         } else if (accessibleProfiles.length === 0) {
           answer = buildAccessDeniedMessage(message);
         } else {
@@ -723,6 +726,7 @@ export async function answerQuestion(
       answer,
       followUpQuestions,
       suggestedUsers,
+      githubSyncContext,
     };
   } catch (error) {
     console.error("Error in answerQuestion:", error);
@@ -731,6 +735,7 @@ export async function answerQuestion(
         "Sorry, I couldn't understand your question. Please try rephrasing it.",
       followUpQuestions: [],
       suggestedUsers: [],
+      githubSyncContext: null,
     };
   }
 }

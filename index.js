@@ -17,6 +17,7 @@ import {
 } from "./logic/database/documentTagService.js";
 import {
   clearAllSyncedGitHubData,
+  getSyncedGitHubRepositories,
   getSyncedGitHubRepository,
   parseGitHubRepository,
   normalizeGitHubUsername,
@@ -168,7 +169,8 @@ function getCommandsList() {
   return (
     `*Available Commands:*\n` +
     `• \`/update-profile\` — Update your role or experience level\n` +
-    `• \`/link-github\` — Link your GitHub username for repo-based recommendations\n` +
+    `• \`/link-username\` — Link your GitHub username for repo-based recommendations\n` +
+    `• \`/list-repos\` — Show all synced GitHub repos you can scope against\n` +
     `• \`/set-active-repo\` — Choose which synced GitHub repo analytics should use\n` +
     `• \`/active-repo\` — Show your current active GitHub repo\n` +
     `• \`/reset\` — Delete your profile and start over\n` +
@@ -312,16 +314,40 @@ async function resolveSuggestedUsersForChannel(
   }
 }
 
-function buildUserSuggestionBlocks(answer, suggestedUsers) {
-  const blocks = [
-    {
-      type: "section",
-      text: {
-        type: "mrkdwn",
-        text: answer,
-      },
+function buildSyncNowAccessory(syncContext, question) {
+  if (!syncContext?.repoFullName || !question) {
+    return null;
+  }
+
+  return {
+    type: "button",
+    text: { type: "plain_text", text: "Sync now", emoji: true },
+    action_id: "sync_github_repo_now",
+    value: JSON.stringify({
+      repoFullName: syncContext.repoFullName,
+      question,
+    }),
+  };
+}
+
+function buildUserSuggestionBlocks(
+  answer,
+  suggestedUsers,
+  { question = null, syncContext = null } = {},
+) {
+  const answerBlock = {
+    type: "section",
+    text: {
+      type: "mrkdwn",
+      text: answer,
     },
-  ];
+  };
+  const syncNowAccessory = buildSyncNowAccessory(syncContext, question);
+  if (syncNowAccessory) {
+    answerBlock.accessory = syncNowAccessory;
+  }
+
+  const blocks = [answerBlock];
   console.log("Building user suggestion blocks for:", suggestedUsers);
   if (Array.isArray(suggestedUsers) && suggestedUsers.length > 0) {
     blocks.push({ type: "divider" });
@@ -329,7 +355,10 @@ function buildUserSuggestionBlocks(answer, suggestedUsers) {
     suggestedUsers.slice(0, 5).forEach((user) => {
       const labelParts = [user.role, user.department].filter(Boolean);
       if (user.github_username) {
-        labelParts.push(`GitHub: @${user.github_username}`);
+        const githubUsername = String(user.github_username).replace(/^@/, "");
+        labelParts.push(
+          `GitHub: <https://github.com/${githubUsername}|@${githubUsername}>`,
+        );
       }
       const whyLines =
         Array.isArray(user.why) && user.why.length > 0
@@ -380,13 +409,61 @@ ${followUpQuestions.map((question, index) => `${index + 1}. ${question}`).join("
   return blocks;
 }
 
+function buildTextResponseMessage(response, shouldShowGitHubReminder = false) {
+  if (!response || typeof response === "string") {
+    return response || "I apologize, I was not able to answer this.";
+  }
+
+  let messageText =
+    response.answer || "I apologize, I was not able to answer this.";
+  if (shouldShowGitHubReminder) {
+    messageText =
+      "Tip: link your GitHub username with `/link-username your_username` to improve teammate recommendations and help others find you for relevant repo work.\n\n" +
+      messageText;
+  }
+  if (response.followUpQuestions && response.followUpQuestions.length > 0) {
+    messageText += "\n\n💡 *You might also want to ask:*\n";
+    response.followUpQuestions.forEach((question, index) => {
+      messageText += `${index + 1}. ${question}\n`;
+    });
+  }
+
+  return messageText;
+}
+
+async function buildSuggestionBlocksForResponse(
+  client,
+  channelId,
+  requesterId,
+  question,
+  response,
+) {
+  const suggestedUsers =
+    channelId && channelId.startsWith("D")
+      ? response.suggestedUsers
+      : await resolveSuggestedUsersForChannel(
+          client,
+          channelId,
+          response.suggestedUsers,
+          requesterId,
+        );
+
+  return appendFollowUpQuestions(
+    buildUserSuggestionBlocks(response.answer, suggestedUsers, {
+      question,
+      syncContext: response.githubSyncContext,
+    }),
+    response.followUpQuestions,
+  );
+}
+
 function getGitHubLinkReminderBlocks() {
   return [
     {
       type: "section",
       text: {
         type: "mrkdwn",
-        text: "Tip: link your GitHub username with `/link-github your_username` to improve teammate recommendations and help others find you for relevant repo work.",
+        text: "Tip: link your GitHub username with `/link-username your_username` to improve teammate recommendations and help others find you for relevant repo work.",
       },
     },
     { type: "divider" },
@@ -492,15 +569,12 @@ app.event("app_mention", async ({ event, say, client }) => {
     Array.isArray(response.suggestedUsers) &&
     response.suggestedUsers.length > 0
   ) {
-    const resolvedSuggestedUsers = await resolveSuggestedUsersForChannel(
+    let blocks = await buildSuggestionBlocksForResponse(
       client,
       event.channel,
-      response.suggestedUsers,
       event.user,
-    );
-    let blocks = appendFollowUpQuestions(
-      buildUserSuggestionBlocks(response.answer, resolvedSuggestedUsers),
-      response.followUpQuestions,
+      question,
+      response,
     );
     if (shouldShowGitHubReminder) {
       blocks = [...getGitHubLinkReminderBlocks(), ...blocks];
@@ -511,20 +585,10 @@ app.event("app_mention", async ({ event, say, client }) => {
       thread_ts: threadTs,
     });
   } else {
-    let messageText =
-      response.answer || "I apologize, I was not able to answer this.";
-    if (shouldShowGitHubReminder) {
-      messageText =
-        "Tip: link your GitHub username with `/link-github your_username` to improve teammate recommendations and help others find you for relevant repo work.\n\n" +
-        messageText;
-    }
-    if (response.followUpQuestions && response.followUpQuestions.length > 0) {
-      messageText += "\n\n💡 *You might also want to ask:*\n";
-      response.followUpQuestions.forEach((question, index) => {
-        messageText += `${index + 1}. ${question}\n`;
-      });
-    }
-
+    const messageText = buildTextResponseMessage(
+      response,
+      shouldShowGitHubReminder,
+    );
     await say({ text: messageText, thread_ts: threadTs });
   }
 });
@@ -581,20 +645,17 @@ app.event("message", async ({ event, say, client }) => {
       Array.isArray(response.suggestedUsers) &&
       response.suggestedUsers.length > 0
     ) {
-      const blocks = appendFollowUpQuestions(
-        buildUserSuggestionBlocks(response.answer, response.suggestedUsers),
-        response.followUpQuestions,
+      const blocks = await buildSuggestionBlocksForResponse(
+        client,
+        event.channel,
+        userId,
+        event.text,
+        response,
       );
       await say({ blocks, text: response.answer, thread_ts: threadTs });
       return;
     } else {
-      let messageText = response.answer || response;
-      if (response.followUpQuestions && response.followUpQuestions.length > 0) {
-        messageText += "\n\n💡 *You might also want to ask:*\n";
-        response.followUpQuestions.forEach((question, index) => {
-          messageText += `${index + 1}. ${question}\n`;
-        });
-      }
+      const messageText = buildTextResponseMessage(response);
       await say({ text: messageText, thread_ts: threadTs });
       return;
     }
@@ -678,6 +739,91 @@ app.action("start_groupchat", async ({ ack, body, client }) => {
       channel: channelOrDM, // ✅ fixed
       user: requesterId,
       text: "Sorry, I couldn't create the group chat. Please try again.",
+    });
+  }
+});
+
+app.action("sync_github_repo_now", async ({ ack, body, client }) => {
+  await ack();
+
+  const channelId = body.channel?.id;
+  const messageTs = body.message?.ts;
+  const requesterId = body.user.id;
+
+  let payload;
+  try {
+    payload = JSON.parse(body.actions?.[0]?.value || "{}");
+  } catch (error) {
+    console.error("Failed to parse sync-now action payload:", error);
+    if (channelId) {
+      await client.chat.postEphemeral({
+        channel: channelId,
+        user: requesterId,
+        text: "Sorry, I couldn't refresh that GitHub analytics view due to an internal error.",
+      });
+    }
+    return;
+  }
+
+  const repoFullName = parseGitHubRepository(payload.repoFullName);
+  const question = String(payload.question || "").trim();
+
+  if (!channelId || !messageTs || !repoFullName || !question) {
+    if (channelId) {
+      await client.chat.postEphemeral({
+        channel: channelId,
+        user: requesterId,
+        text: "Sorry, I couldn't determine which repo or question to refresh.",
+      });
+    }
+    return;
+  }
+
+  try {
+    await syncGitHubRepository(repoFullName);
+
+    const response = await answerQuestion(question, requesterId, false, []);
+    const requesterProfile = await fetchUserProfile(requesterId);
+    const shouldShowGitHubReminder =
+      !body.message?.thread_ts &&
+      !normalizeGitHubUsername(requesterProfile?.userInfo?.github_username);
+
+    if (
+      response &&
+      Array.isArray(response.suggestedUsers) &&
+      response.suggestedUsers.length > 0
+    ) {
+      let blocks = await buildSuggestionBlocksForResponse(
+        client,
+        channelId,
+        requesterId,
+        question,
+        response,
+      );
+      if (shouldShowGitHubReminder) {
+        blocks = [...getGitHubLinkReminderBlocks(), ...blocks];
+      }
+
+      await client.chat.update({
+        channel: channelId,
+        ts: messageTs,
+        text: response.answer || "I apologize, I was not able to answer this",
+        blocks,
+      });
+    } else {
+      await client.chat.update({
+        channel: channelId,
+        ts: messageTs,
+        text: buildTextResponseMessage(response, shouldShowGitHubReminder),
+        blocks: [],
+      });
+    }
+  } catch (error) {
+    console.error("Error refreshing GitHub analytics from button:", error);
+    await client.chat.postEphemeral({
+      channel: channelId,
+      user: requesterId,
+      text: `Sorry, I couldn't refresh *${repoFullName}* right now. ${error.message}`,
     });
   }
 });
@@ -888,7 +1034,7 @@ app.command("/sync-docs", async ({ ack, respond }) => {
   }
 });
 
-app.command("/link-github", async ({ ack, body, client }) => {
+app.command("/link-username", async ({ ack, body, client }) => {
   await ack();
 
   const githubUsername = normalizeGitHubUsername(body.text);
@@ -896,7 +1042,7 @@ app.command("/link-github", async ({ ack, body, client }) => {
     await client.chat.postEphemeral({
       channel: body.channel_id,
       user: body.user_id,
-      text: "Provide a GitHub username, for example `/link-github octocat`.",
+      text: "Provide a GitHub username, for example `/link-username octocat`.",
     });
     return;
   }
@@ -923,7 +1069,7 @@ app.command("/link-github", async ({ ack, body, client }) => {
     await client.chat.postEphemeral({
       channel: body.channel_id,
       user: body.user_id,
-      text: `✅ Linked your profile to GitHub user *@${githubUsername}*.`,
+      text: `✅ Linked your profile to GitHub username *@${githubUsername}*.`,
     });
   } catch (error) {
     console.error("Error linking GitHub username:", error);
@@ -931,6 +1077,45 @@ app.command("/link-github", async ({ ack, body, client }) => {
       channel: body.channel_id,
       user: body.user_id,
       text: "Sorry, I couldn't link your GitHub username right now.",
+    });
+  }
+});
+
+app.command("/list-repos", async ({ ack, body, client }) => {
+  await ack();
+
+  try {
+    const syncedRepos = getSyncedGitHubRepositories();
+    const existing = await fetchUserProfile(body.user_id);
+    const activeRepo = existing?.userInfo?.active_github_repo || null;
+
+    if (syncedRepos.length === 0) {
+      await client.chat.postEphemeral({
+        channel: body.channel_id,
+        user: body.user_id,
+        text: "I don't have any synced GitHub repos yet. Run `/sync-repo owner/repo` first.",
+      });
+      return;
+    }
+
+    const repoLines = syncedRepos.map((repo) =>
+      repo === activeRepo ? `• *${repo}* (active)` : `• ${repo}`,
+    );
+
+    await client.chat.postEphemeral({
+      channel: body.channel_id,
+      user: body.user_id,
+      text:
+        `Here are the ${syncedRepos.length} synced GitHub repo${syncedRepos.length === 1 ? "" : "s"} I can scope against:\n` +
+        `${repoLines.join("\n")}\n\n` +
+        "You can copy any repo name from this list and paste it into `/set-active-repo owner/repo` to choose one.",
+    });
+  } catch (error) {
+    console.error("Error listing synced GitHub repos:", error);
+    await client.chat.postEphemeral({
+      channel: body.channel_id,
+      user: body.user_id,
+      text: "Sorry, I couldn't load the synced GitHub repos right now.",
     });
   }
 });
@@ -973,7 +1158,7 @@ app.command("/set-active-repo", async ({ ack, body, client }) => {
     await client.chat.postEphemeral({
       channel: body.channel_id,
       user: body.user_id,
-      text: `I don't have analytics for *${normalizedRepo}* yet. Run \`/sync-repo ${normalizedRepo}\` first, then set it as active.`,
+      text: `I don't have analytics for *${normalizedRepo}* yet. Run \`/sync-repo ${normalizedRepo}\` first. You can also use \`/list-repos\` to see everything that's already synced.`,
     });
     return;
   }
@@ -1021,7 +1206,7 @@ app.command("/active-repo", async ({ ack, body, client }) => {
       await client.chat.postEphemeral({
         channel: body.channel_id,
         user: body.user_id,
-        text: "You do not have an active GitHub repo yet. Use `/set-active-repo owner/repo` after syncing one.",
+        text: "You do not have an active GitHub repo yet. Use `/list-repos` to see synced repos, then `/set-active-repo owner/repo` to choose one.",
       });
       return;
     }

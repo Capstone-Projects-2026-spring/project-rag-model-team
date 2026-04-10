@@ -242,6 +242,10 @@ describe("answerQuestion access filtering", () => {
           ],
         },
       ],
+      syncContext: {
+        repoFullName: "Capstone-Projects-2026-spring/project-rag-model-team",
+        syncedAt: "2026-04-09T10:00:00Z",
+      },
     });
 
     mockQueryGraphQL
@@ -289,6 +293,11 @@ describe("answerQuestion access filtering", () => {
 
     expect(response.answer).toContain("strong references");
     expect(response.suggestedUsers).toHaveLength(2);
+    expect(response.githubSyncContext).toEqual(
+      expect.objectContaining({
+        repoFullName: "Capstone-Projects-2026-spring/project-rag-model-team",
+      }),
+    );
     expect(response.suggestedUsers[0].why).toBeDefined();
     expect(mockRecommendGitHubUsersForTopic).toHaveBeenCalledTimes(1);
     expect(mockRecommendGitHubUsersForTopic).toHaveBeenCalledWith(
@@ -359,7 +368,7 @@ describe("answerQuestion access filtering", () => {
 
     mockRecommendGitHubUsersForTopic.mockReturnValue({
       answer:
-        "I have synced GitHub analytics for multiple repos: org/repo-a and org/repo-b. Set one with `/set-active-repo owner/repo`, or explicitly ask me to search across all synced repos.",
+        "I have synced GitHub analytics for multiple repos: org/repo-a and org/repo-b. Use `/list-repos` to review them, set one with `/set-active-repo owner/repo`, or explicitly ask me to search across all synced repos.",
       suggestedUsers: [],
     });
 
@@ -395,6 +404,7 @@ describe("answerQuestion access filtering", () => {
 
     expect(response.answer).toContain("multiple repos");
     expect(response.answer).toContain("/set-active-repo");
+    expect(response.answer).toContain("/list-repos");
     expect(response.suggestedUsers).toEqual([]);
     expect(chainHandlers.userInfo).not.toHaveBeenCalled();
   });

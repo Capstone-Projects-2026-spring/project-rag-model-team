@@ -78,7 +78,12 @@ export function normalizeGitHubUsername(value) {
 }
 
 export function parseGitHubRepository(value) {
-  const normalized = String(value || "").trim();
+  const normalized = String(value || "")
+    .trim()
+    .replace(/^[-*•]\s*/, "")
+    .replace(/\s+\(active\)$/i, "")
+    .replace(/^\*+|\*+$/g, "")
+    .replace(/^`+|`+$/g, "");
   if (!normalized) return null;
 
   const slackUnwrapped = normalized.replace(/^<|>$/g, "").split("|")[0].trim();
@@ -177,6 +182,52 @@ function formatFileList(files) {
 function formatShortDate(value) {
   if (!value) return null;
   return String(value).slice(0, 10);
+}
+
+function formatRelativeTime(value) {
+  if (!value) return null;
+
+  const timestamp = Date.parse(value);
+  if (Number.isNaN(timestamp)) {
+    return null;
+  }
+
+  const diffMs = Math.max(0, Date.now() - timestamp);
+  const minuteMs = 60 * 1000;
+  const hourMs = 60 * minuteMs;
+  const dayMs = 24 * hourMs;
+
+  if (diffMs < minuteMs) {
+    return "just now";
+  }
+
+  if (diffMs < hourMs) {
+    const minutes = Math.floor(diffMs / minuteMs);
+    return `${minutes} minute${minutes === 1 ? "" : "s"} ago`;
+  }
+
+  if (diffMs < dayMs) {
+    const hours = Math.floor(diffMs / hourMs);
+    return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  }
+
+  const days = Math.floor(diffMs / dayMs);
+  if (days < 7) {
+    return `${days} day${days === 1 ? "" : "s"} ago`;
+  }
+
+  if (days < 30) {
+    const weeks = Math.floor(days / 7);
+    return `${weeks} week${weeks === 1 ? "" : "s"} ago`;
+  }
+
+  if (days < 365) {
+    const months = Math.floor(days / 30);
+    return `${months} month${months === 1 ? "" : "s"} ago`;
+  }
+
+  const years = Math.floor(days / 365);
+  return `${years} year${years === 1 ? "" : "s"} ago`;
 }
 
 function getMostSpecificActivityWindow(stats) {
@@ -460,12 +511,12 @@ function buildContributorWhy(
     const windowCount = activityWindow?.count || stats.recent_commits;
     why.push(
       lastCommitDate
-        ? `Made ${windowCount} commit${windowCount === 1 ? "" : "s"} in the last ${windowDays} days in ${repoLabel}; latest activity was ${lastCommitDate}.`
-        : `Made ${windowCount} commit${windowCount === 1 ? "" : "s"} in the last ${windowDays} days in ${repoLabel}.`,
+        ? `Made *${windowCount} commit${windowCount === 1 ? "" : "s"}* in the last *${windowDays} days* in ${repoLabel}; latest activity was *${lastCommitDate}*.`
+        : `Made *${windowCount} commit${windowCount === 1 ? "" : "s"}* in the last *${windowDays} days* in ${repoLabel}.`,
     );
   }
 
-  if (stats.total_commits >= heavyThreshold) {
+  if (stats.total_commits >= heavyThreshold && stats.recent_commits === 0) {
     why.push(
       `Has contributed heavily to ${repoLabel} with ${stats.total_commits} synced commit${stats.total_commits === 1 ? "" : "s"}.`,
     );
@@ -497,7 +548,7 @@ function formatHighlightedRepoScope(repoNames) {
 
   const highlightedRepos = repoNames
     .slice(0, 3)
-    .map((repoName) => `\`${repoName}\``);
+    .map((repoName) => `<https://github.com/${repoName}|${repoName}>`);
   if (repoNames.length === 1) {
     return highlightedRepos[0];
   }
@@ -509,15 +560,21 @@ function formatHighlightedRepoScope(repoNames) {
   return `${highlightedRepos.join(", ")}${repoNames.length > 3 ? `, and ${repoNames.length - 3} more` : ""}`;
 }
 
-function buildGitHubSummary(topic, suggestions, repoNames = []) {
+function buildSyncFreshnessLine(repo) {
+  const relativeTime = formatRelativeTime(repo?.synced_at);
+  return relativeTime ? `*Analytics last synced:* *${relativeTime}*` : null;
+}
+
+function buildGitHubSummary(topic, suggestions, repoNames = [], scopedRepo = null) {
   if (suggestions.length === 0) {
     return null;
   }
 
   const repoScope = formatRepoScope(repoNames);
   const highlightedRepoScope = formatHighlightedRepoScope(repoNames);
+  const freshnessLine = buildSyncFreshnessLine(scopedRepo);
   const repoBanner = highlightedRepoScope
-    ? `*Repo analytics:* ${highlightedRepoScope}\n`
+    ? `*Repo analytics:* ${highlightedRepoScope}\n${freshnessLine ? `${freshnessLine}\n` : ""}`
     : "";
   const repoLabel = repoScope ? ` from ${repoScope}` : "";
   return `${repoBanner}Here are a few people who look like strong references for "${topic}" based on synced GitHub activity${repoLabel}.`;
@@ -581,7 +638,7 @@ export function recommendGitHubUsersForTopic(
   if (repoFullName) {
     if (!syncedRepos.includes(repoFullName)) {
       return {
-        answer: `Your active GitHub repo is set to "${repoFullName}", but I do not have synced analytics for it right now. Sync it again or choose another active repo with \`/set-active-repo owner/repo\`.`,
+        answer: `Your active GitHub repo is set to "${repoFullName}", but I do not have synced analytics for it right now. Sync it again, or use \`/list-repos\` to see what's available before choosing another with \`/set-active-repo owner/repo\`.`,
         suggestedUsers: [],
       };
     }
@@ -592,10 +649,13 @@ export function recommendGitHubUsersForTopic(
     scopedRepos = syncedRepos;
   } else if (syncedRepos.length > 1) {
     return {
-      answer: `I have synced GitHub analytics for multiple repos: ${formatRepoScope(syncedRepos)}. Set one with \`/set-active-repo owner/repo\`, or explicitly ask me to search across all synced repos.`,
+      answer: `I have synced GitHub analytics for multiple repos: ${formatRepoScope(syncedRepos)}. Use \`/list-repos\` to review them, set one with \`/set-active-repo owner/repo\`, or explicitly ask me to search across all synced repos.`,
       suggestedUsers: [],
     };
   }
+
+  const scopedRepo =
+    scopedRepos.length === 1 ? getSyncedGitHubRepository(scopedRepos[0]) : null;
 
   const contributorRows = getAll(
     `SELECT c.*, r.full_name
@@ -709,7 +769,13 @@ export function recommendGitHubUsersForTopic(
     .map((candidate) => candidate.suggestion);
 
   return {
-    answer: buildGitHubSummary(topic, candidates, scopedRepos),
+    answer: buildGitHubSummary(topic, candidates, scopedRepos, scopedRepo),
     suggestedUsers: candidates,
+    syncContext: scopedRepo
+      ? {
+          repoFullName: scopedRepo.full_name,
+          syncedAt: scopedRepo.synced_at || null,
+        }
+      : null,
   };
 }
