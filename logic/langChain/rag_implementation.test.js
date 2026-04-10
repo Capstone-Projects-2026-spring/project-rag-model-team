@@ -4,6 +4,7 @@ import { jest } from "@jest/globals";
 const mockQueryGraphQL = jest.fn();
 const mockListFiles = jest.fn();
 const mockGetFile = jest.fn();
+const mockRecommendGitHubUsersForTopic = jest.fn();
 
 const mockGetDocumentTags = jest.fn();
 const mockUpsertDocumentTags = jest.fn();
@@ -15,6 +16,7 @@ const chainHandlers = {
   driveSelection: jest.fn(),
   autoClassify: jest.fn(),
   followUpQuestions: jest.fn(),
+  threadHistory: jest.fn(),
 };
 
 function getChainHandler(template) {
@@ -40,6 +42,10 @@ function getChainHandler(template) {
 
   if (template.includes("generate 3-5 relevant follow-up questions")) {
     return chainHandlers.followUpQuestions;
+  }
+
+  if (template.includes("DIRECTLY answered from previous conversation history")) {
+    return chainHandlers.threadHistory;
   }
 
   throw new Error(`Unknown prompt template: ${template}`);
@@ -92,6 +98,10 @@ await jest.unstable_mockModule("../database/documentTagService.js", () => ({
   upsertDocumentTags: mockUpsertDocumentTags,
 }));
 
+await jest.unstable_mockModule("../github/githubService.js", () => ({
+  recommendGitHubUsersForTopic: mockRecommendGitHubUsersForTopic,
+}));
+
 const { answerQuestion } = await import("./rag_implementation.js");
 
 beforeEach(() => {
@@ -102,9 +112,14 @@ beforeEach(() => {
   chainHandlers.driveSearch.mockResolvedValue("[]");
   chainHandlers.driveSelection.mockResolvedValue("IDK");
   chainHandlers.autoClassify.mockResolvedValue('{"classification_level":"internal","tags":[]}');
+  chainHandlers.threadHistory.mockResolvedValue('{"threadAnswer":false}');
   // Default: files not yet in DB, so enrichment triggers auto-classify
   mockGetDocumentTags.mockReturnValue(null);
   mockUpsertDocumentTags.mockReturnValue(undefined);
+  mockRecommendGitHubUsersForTopic.mockReturnValue({
+    answer: null,
+    suggestedUsers: [],
+  });
 });
 
 describe("answerQuestion access filtering", () => {
@@ -135,6 +150,8 @@ describe("answerQuestion access filtering", () => {
           userInfo: {
             role: "junior_dev",
             classification_level: "internal",
+            active_github_repo:
+              "Capstone-Projects-2026-spring/project-rag-model-team",
           },
         },
       })
@@ -190,6 +207,206 @@ describe("answerQuestion access filtering", () => {
     expect(userInfo).toContain("Alex Internal");
     expect(userInfo).not.toContain("Morgan Manager");
     expect(userInfo).not.toContain("restricted");
+  });
+
+  it("uses synced GitHub contributor recommendations when linked users are available", async () => {
+    chainHandlers.intent.mockResolvedValue(
+      '{"type":"GET_USER","action":"GET_ALL"}',
+    );
+    chainHandlers.followUpQuestions.mockResolvedValue('[]');
+
+    mockRecommendGitHubUsersForTopic.mockReturnValue({
+      answer:
+        'Here are a few people who look like strong references for "Who can help with auth?" based on synced GitHub activity.',
+      suggestedUsers: [
+        {
+          session_id: "U_AUTH",
+          name: "Alex Auth",
+          role: "senior_dev",
+          department: "Platform",
+          reason: "Worked on files related to auth.",
+          why: [
+            "Worked on files related to auth.",
+            "Made 3 recent commits in org/repo.",
+          ],
+        },
+        {
+          session_id: "U_RECENT",
+          name: "Riley Recent",
+          role: "qa",
+          department: "Quality",
+          reason: "Made 2 recent commits in org/repo.",
+          why: [
+            "Made 2 recent commits in org/repo.",
+            "Has contributed heavily to org/repo.",
+          ],
+        },
+      ],
+      syncContext: {
+        repoFullName: "Capstone-Projects-2026-spring/project-rag-model-team",
+        syncedAt: "2026-04-09T10:00:00Z",
+      },
+    });
+
+    mockQueryGraphQL
+      .mockResolvedValueOnce({
+        getUserProfile: {
+          session_id: "U_REQUESTER",
+          userInfo: {
+            role: "junior_dev",
+            classification_level: "internal",
+            active_github_repo:
+              "Capstone-Projects-2026-spring/project-rag-model-team",
+          },
+        },
+      })
+      .mockResolvedValueOnce({
+        getAllUserProfiles: [
+          {
+            id: "1",
+            session_id: "U_AUTH",
+            hasCompletedIntake: true,
+            userInfo: {
+              name: "Alex Auth",
+              github_username: "alexauth",
+              role: "senior_dev",
+              classification_level: "internal",
+              department: "Platform",
+            },
+          },
+          {
+            id: "2",
+            session_id: "U_RECENT",
+            hasCompletedIntake: true,
+            userInfo: {
+              name: "Riley Recent",
+              github_username: "rileyrecent",
+              role: "qa",
+              classification_level: "internal",
+              department: "Quality",
+            },
+          },
+        ],
+      });
+
+    const response = await answerQuestion("Who can help with auth?", "U_REQUESTER");
+
+    expect(response.answer).toContain("strong references");
+    expect(response.suggestedUsers).toHaveLength(2);
+    expect(response.githubSyncContext).toEqual(
+      expect.objectContaining({
+        repoFullName: "Capstone-Projects-2026-spring/project-rag-model-team",
+      }),
+    );
+    expect(response.suggestedUsers[0].why).toBeDefined();
+    expect(mockRecommendGitHubUsersForTopic).toHaveBeenCalledTimes(1);
+    expect(mockRecommendGitHubUsersForTopic).toHaveBeenCalledWith(
+      "Who can help with auth?",
+      expect.any(Array),
+      3,
+      "Capstone-Projects-2026-spring/project-rag-model-team",
+    );
+    expect(chainHandlers.userInfo).not.toHaveBeenCalled();
+  });
+
+  it("returns GitHub username recommendations even when no Slack users are linked yet", async () => {
+    chainHandlers.intent.mockResolvedValue(
+      '{"type":"GET_USER","action":"GET_ALL"}',
+    );
+    chainHandlers.followUpQuestions.mockResolvedValue('[]');
+
+    mockRecommendGitHubUsersForTopic.mockReturnValue({
+      answer:
+        'Here are a few people who look like strong references for "Who can help with CI?" based on synced GitHub activity.',
+      suggestedUsers: [
+        {
+          session_id: null,
+          name: "octocat",
+          github_username: "octocat",
+          role: null,
+          department: null,
+          reason: "Worked on files related to ci.",
+          why: [
+            "Worked on files related to ci.",
+            "Made 4 recent commits in org/repo.",
+          ],
+        },
+      ],
+    });
+
+    mockQueryGraphQL
+      .mockResolvedValueOnce({
+        getUserProfile: {
+          session_id: "U_REQUESTER",
+          userInfo: {
+            role: "junior_dev",
+            classification_level: "internal",
+          },
+        },
+      })
+      .mockResolvedValueOnce({
+        getAllUserProfiles: [],
+      });
+
+    const response = await answerQuestion("Who can help with CI?", "U_REQUESTER");
+
+    expect(response.answer).toContain("strong references");
+    expect(response.suggestedUsers).toEqual([
+      expect.objectContaining({
+        name: "octocat",
+        github_username: "octocat",
+      }),
+    ]);
+    expect(chainHandlers.userInfo).not.toHaveBeenCalled();
+  });
+
+  it("returns the GitHub repo-scope message instead of falling back to generic suggestions", async () => {
+    chainHandlers.intent.mockResolvedValue(
+      '{"type":"GET_USER","action":"GET_ALL"}',
+    );
+    chainHandlers.followUpQuestions.mockResolvedValue('[]');
+
+    mockRecommendGitHubUsersForTopic.mockReturnValue({
+      answer:
+        "I have synced GitHub analytics for multiple repos: org/repo-a and org/repo-b. Use `/list-repos` to review them, set one with `/set-active-repo owner/repo`, or explicitly ask me to search across all synced repos.",
+      suggestedUsers: [],
+    });
+
+    mockQueryGraphQL
+      .mockResolvedValueOnce({
+        getUserProfile: {
+          session_id: "U_REQUESTER",
+          userInfo: {
+            role: "junior_dev",
+            classification_level: "internal",
+          },
+        },
+      })
+      .mockResolvedValueOnce({
+        getAllUserProfiles: [
+          {
+            id: "1",
+            session_id: "U_AUTH",
+            hasCompletedIntake: true,
+            userInfo: {
+              name: "Alex Auth",
+              role: "senior_dev",
+              classification_level: "internal",
+            },
+          },
+        ],
+      });
+
+    const response = await answerQuestion(
+      "Who should I talk to about database?",
+      "U_REQUESTER",
+    );
+
+    expect(response.answer).toContain("multiple repos");
+    expect(response.answer).toContain("/set-active-repo");
+    expect(response.answer).toContain("/list-repos");
+    expect(response.suggestedUsers).toEqual([]);
+    expect(chainHandlers.userInfo).not.toHaveBeenCalled();
   });
 
   it("filters unauthorized files before document metadata reaches the file-selection prompt", async () => {

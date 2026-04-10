@@ -171,9 +171,15 @@ Register the following slash commands in your Slack app under **Slash Commands**
 
 | Command | Description |
 |---|---|
+| `/link-username` | Link your GitHub username for repo-based recommendations |
+| `/list-repos` | Show all synced GitHub repos you can scope against |
+| `/set-active-repo` | Choose which synced GitHub repo analytics should use |
+| `/active-repo` | Show your current active GitHub repo |
 | `/update-profile` | Update your role or experience level |
 | `/reset` | Delete your profile and start over |
 | `/sync-docs` | Bulk classify all Google Drive documents using LLM auto-tagging |
+| `/sync-repo` | Sync a GitHub repo's contributor activity |
+| `/reset-repos` | Clear all synced GitHub repo analytics |
 | `/classify-docs` | Change a specific document's classification level via a dropdown modal |
 
 You can also type `help` or `commands` in any channel to see this list from the bot.

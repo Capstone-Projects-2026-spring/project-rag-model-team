@@ -1,9 +1,9 @@
-import dotenv from 'dotenv';
-import { ChatGroq } from '@langchain/groq';
-import { PromptTemplate } from '@langchain/core/prompts';
-import { StringOutputParser } from '@langchain/core/output_parsers';
-import {listFiles, getFile} from '../../google_api/driveService.js';
-import { queryGraphQL } from '../graphql_setup/graphql_client.js';
+import dotenv from "dotenv";
+import { ChatGroq } from "@langchain/groq";
+import { PromptTemplate } from "@langchain/core/prompts";
+import { StringOutputParser } from "@langchain/core/output_parsers";
+import { listFiles, getFile } from "../../google_api/driveService.js";
+import { queryGraphQL } from "../graphql_setup/graphql_client.js";
 import {
   buildAccessDeniedMessage,
   annotateFilesWithClassification,
@@ -11,17 +11,22 @@ import {
   filterAccessibleProfiles,
   getClassificationForRole,
   normalizeClassification,
-} from '../security/access_control.js';
+} from "../security/access_control.js";
 import {
   upsertDocumentTags,
   getDocumentTags,
-} from '../database/documentTagService.js';
+} from "../database/documentTagService.js";
+import { recommendGitHubUsersForTopic } from "../github/githubService.js";
 
 dotenv.config();
 
-const llm = new ChatGroq({ apiKey: process.env.GROQ_API_KEY, model: 'llama-3.1-8b-instant' });
+const llm = new ChatGroq({
+  apiKey: process.env.GROQ_API_KEY,
+  model: "llama-3.1-8b-instant",
+});
 
-const GREETING_PATTERN = /^(hi|hello|hey|howdy|good morning|good afternoon|good evening)\b/i;
+const GREETING_PATTERN =
+  /^(hi|hello|hey|howdy|good morning|good afternoon|good evening)\b/i;
 
 // Helper function to convert stream to string
 async function streamToString(stream) {
@@ -29,19 +34,19 @@ async function streamToString(stream) {
   for await (const chunk of stream) {
     chunks.push(chunk);
   }
-  return Buffer.concat(chunks).toString('utf8');
+  return Buffer.concat(chunks).toString("utf8");
 }
 
 // Helper function to extract JSON object from LLM response
 function extractJSON(text) {
   const cleaned = text
-    .replace(/```json/g, '')
-    .replace(/```/g, '')
+    .replace(/```json/g, "")
+    .replace(/```/g, "")
     .trim();
 
   // Find whichever comes first — { or [
-  const objStart = cleaned.indexOf('{');
-  const arrStart = cleaned.indexOf('[');
+  const objStart = cleaned.indexOf("{");
+  const arrStart = cleaned.indexOf("[");
 
   let start;
   if (objStart === -1 && arrStart === -1) return null;
@@ -49,12 +54,12 @@ function extractJSON(text) {
   else if (arrStart === -1) start = objStart;
   else start = Math.min(objStart, arrStart);
 
-  const openChar  = cleaned[start] === '{' ? '{' : '[';
-  const closeChar = cleaned[start] === '{' ? '}' : ']';
+  const openChar = cleaned[start] === "{" ? "{" : "[";
+  const closeChar = cleaned[start] === "{" ? "}" : "]";
 
   let depth = 0;
   for (let i = start; i < cleaned.length; i++) {
-    if (cleaned[i] === openChar)  depth++;
+    if (cleaned[i] === openChar) depth++;
     if (cleaned[i] === closeChar) depth--;
 
     if (depth === 0) {
@@ -157,7 +162,10 @@ const autoClassifyPrompt = PromptTemplate.fromTemplate(`
 
 // Strip markdown code fences that the LLM sometimes wraps around JSON responses
 function stripCodeFences(str) {
-  return str.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+  return str
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```$/, "")
+    .trim();
 }
 
 //JSON ONLY
@@ -221,14 +229,18 @@ async function parseIntent(message) {
     console.log("Raw intent result:", result);
     try {
       const parsed = extractJSON(result);
-      return parsed || { type: 'GENERAL' };
+      return parsed || { type: "GENERAL" };
     } catch (jsonError) {
-      console.warn("Intent parse JSON failed, defaulting GENERAL; result:", result, jsonError);
-      return { type: 'GENERAL' };
+      console.warn(
+        "Intent parse JSON failed, defaulting GENERAL; result:",
+        result,
+        jsonError,
+      );
+      return { type: "GENERAL" };
     }
   } catch (invokeError) {
     console.error("intentChain.invoke failed:", invokeError);
-    return { type: 'GENERAL' };
+    return { type: "GENERAL" };
   }
 }
 
@@ -245,7 +257,10 @@ async function suggestUserForTopic(userInfo, topic) {
       };
     }
   } catch (error) {
-    console.warn("User suggestion parse failed, returning raw suggestion text:", error);
+    console.warn(
+      "User suggestion parse failed, returning raw suggestion text:",
+      error,
+    );
   }
 
   return {
@@ -255,7 +270,7 @@ async function suggestUserForTopic(userInfo, topic) {
 }
 
 function isGreetingMessage(message) {
-  return GREETING_PATTERN.test(String(message || '').trim());
+  return GREETING_PATTERN.test(String(message || "").trim());
 }
 
 function buildGreetingResponse(requesterContext) {
@@ -271,7 +286,7 @@ async function getRequesterAccessContext(requesterSessionId) {
     return {
       session_id: null,
       role: null,
-      classification_level: 'public'
+      classification_level: "public",
     };
   }
 
@@ -283,10 +298,11 @@ async function getRequesterAccessContext(requesterSessionId) {
           userInfo {
             role
             classification_level
+            active_github_repo
           }
         }
       }`,
-      { session_id: requesterSessionId }
+      { session_id: requesterSessionId },
     );
 
     const requesterProfile = data?.getUserProfile;
@@ -296,7 +312,7 @@ async function getRequesterAccessContext(requesterSessionId) {
       return {
         session_id: requesterSessionId,
         role: null,
-        classification_level: 'public'
+        classification_level: "public",
       };
     }
 
@@ -305,15 +321,17 @@ async function getRequesterAccessContext(requesterSessionId) {
       role: requesterInfo?.role || null,
       classification_level:
         requesterInfo?.classification_level ||
-        getClassificationForRole(requesterInfo?.role)
+        getClassificationForRole(requesterInfo?.role),
+      active_github_repo: requesterInfo?.active_github_repo || null,
     };
   } catch (error) {
-    console.error('Error loading requester access context:', error);
-    return {
-      session_id: requesterSessionId,
-      role: null,
-      classification_level: 'public'
-    };
+    console.error("Error loading requester access context:", error);
+      return {
+        session_id: requesterSessionId,
+        role: null,
+        classification_level: "public",
+        active_github_repo: null,
+      };
   }
 }
 
@@ -332,18 +350,25 @@ export async function autoClassifyDocument(file) {
       const fullContent = await streamToString(stream);
       excerpt = fullContent.slice(0, 500);
     }
-    const result = await autoClassifyChain.invoke({ name: file.name, excerpt: excerpt });
+    const result = await autoClassifyChain.invoke({
+      name: file.name,
+      excerpt: excerpt,
+    });
     const parsed = extractJSON(result);
     if (parsed) {
       return {
-        classification_level: normalizeClassification(parsed.classification_level),
-        tags: Array.isArray(parsed.tags) ? parsed.tags.map(t => String(t).toLowerCase()) : [],
+        classification_level: normalizeClassification(
+          parsed.classification_level,
+        ),
+        tags: Array.isArray(parsed.tags)
+          ? parsed.tags.map((t) => String(t).toLowerCase())
+          : [],
       };
     }
   } catch (error) {
     console.warn(`Auto-classify failed for "${file.name}":`, error.message);
   }
-  return { classification_level: 'internal', tags: [] };
+  return { classification_level: "internal", tags: [] };
 }
 
 /**
@@ -362,20 +387,33 @@ function enrichFilesWithTags(annotatedFiles) {
       };
     }
     if (file.tags.length > 0) {
-      upsertDocumentTags(file.id, file.name, file.classification_level, file.tags, false);
+      upsertDocumentTags(
+        file.id,
+        file.name,
+        file.classification_level,
+        file.tags,
+        false,
+      );
     }
     return file;
   });
 }
 
-async function searchDriveForTopic(topic, requesterContext, preemptive = false) {
+async function searchDriveForTopic(
+  topic,
+  requesterContext,
+  preemptive = false,
+) {
   const files = await listFiles();
   // Annotate with Drive metadata first, then override with DB values (DB takes priority)
   const annotated = annotateFilesWithClassification(files);
   const enriched = enrichFilesWithTags(annotated);
   // Filter using the final classification (DB-overridden values)
   const enrichedFiles = enriched.filter((file) =>
-    canAccessClassification(requesterContext.classification_level, file.classification_level)
+    canAccessClassification(
+      requesterContext.classification_level,
+      file.classification_level,
+    ),
   );
 
   if (enrichedFiles.length === 0) {
@@ -383,13 +421,15 @@ async function searchDriveForTopic(topic, requesterContext, preemptive = false) 
   }
 
   const fileSuggestionsString = await driveSearchChain.invoke({
-    files: JSON.stringify(enrichedFiles.map(f => ({
-      id: f.id,
-      name: f.name,
-      classification_level: f.classification_level,
-      tags: f.tags,
-    }))),
-    topic
+    files: JSON.stringify(
+      enrichedFiles.map((f) => ({
+        id: f.id,
+        name: f.name,
+        classification_level: f.classification_level,
+        tags: f.tags,
+      })),
+    ),
+    topic,
   });
 
   let fileSuggestions;
@@ -404,9 +444,11 @@ async function searchDriveForTopic(topic, requesterContext, preemptive = false) 
     return "Sorry, I couldn't find relevant information in our documents.";
   }
 
-  const enrichedFilesById = new Map(enrichedFiles.map(file => [file.id, file]));
+  const enrichedFilesById = new Map(
+    enrichedFiles.map((file) => [file.id, file]),
+  );
   const authorizedSuggestions = fileSuggestions
-    .map(file => enrichedFilesById.get(file.id))
+    .map((file) => enrichedFilesById.get(file.id))
     .filter(Boolean);
 
   if (authorizedSuggestions.length === 0) {
@@ -414,7 +456,8 @@ async function searchDriveForTopic(topic, requesterContext, preemptive = false) 
   }
 
   try {
-    const fileContents = await Promise.all(authorizedSuggestions.map(async file => {
+    const fileContents = await Promise.all(
+      authorizedSuggestions.map(async (file) => {
         try {
           const stream = await getFile(file.id);
           const content = await streamToString(stream);
@@ -422,24 +465,35 @@ async function searchDriveForTopic(topic, requesterContext, preemptive = false) 
           // Auto-classify selected files that have no tags yet, caching for future queries
           if (!getDocumentTags(file.id)) {
             console.log(`Auto-classifying "${file.name}"...`);
-            const { classification_level, tags } = await autoClassifyDocument({ ...file, _content: content });
-            upsertDocumentTags(file.id, file.name, classification_level, tags, true);
+            const { classification_level, tags } = await autoClassifyDocument({
+              ...file,
+              _content: content,
+            });
+            upsertDocumentTags(
+              file.id,
+              file.name,
+              classification_level,
+              tags,
+              true,
+            );
           }
 
-          return `File: ${file.name}\nClassification: ${file.classification_level}\nTags: ${file.tags.join(', ')}\n\n${content}`;
+          return `File: ${file.name}\nClassification: ${file.classification_level}\nTags: ${file.tags.join(", ")}\n\n${content}`;
         } catch (error) {
           console.error(`Error reading file ${file.id}:`, error);
           return `Error reading file: ${error.message}`;
         }
-    }));
+      }),
+    );
     console.log("Retrieved file contents:", fileContents);
-    if (!preemptive){
+    if (!preemptive) {
       return await answerDriveSearchQuestion(fileContents, topic);
     } else {
       console.log("Invoking preemptive prompting chain with file contents");
       return await preemptivePromptingChain.invoke({
-                  topic: topic,
-                  data: fileContents});
+        topic: topic,
+        data: fileContents,
+      });
     }
   } catch (error) {
     console.error("Error retrieving file contents:", error);
@@ -449,8 +503,14 @@ async function searchDriveForTopic(topic, requesterContext, preemptive = false) 
 
 async function answerDriveSearchQuestion(fileContents, topic) {
   try {
-    console.log("FileContents being sent to driveSearchSelectionChain:", fileContents);
-    const finalAnswer = await driveSearchSelectionChain.invoke({ content: fileContents, topic });
+    console.log(
+      "FileContents being sent to driveSearchSelectionChain:",
+      fileContents,
+    );
+    const finalAnswer = await driveSearchSelectionChain.invoke({
+      content: fileContents,
+      topic,
+    });
     console.log("Final answer from driveSearchSelectionChain:", finalAnswer);
     if (finalAnswer.trim() === "IDK") {
       return "Sorry, I couldn't find relevant information in our documents.";
@@ -458,21 +518,21 @@ async function answerDriveSearchQuestion(fileContents, topic) {
       return finalAnswer;
     }
   } catch (error) {
-      console.error("Error invoking driveSearchSelectionChain:", error);
-      return "Sorry, I couldn't process the information from the documents.";
+    console.error("Error invoking driveSearchSelectionChain:", error);
+    return "Sorry, I couldn't process the information from the documents.";
   }
 }
 
 async function generateFollowUpQuestions(originalQuestion, answer, intentType) {
   try {
     console.log("Generating follow-up questions for:", originalQuestion);
-    const result = await followUpQuestionsChain.invoke({ 
-      originalQuestion, 
-      answer, 
-      intentType 
+    const result = await followUpQuestionsChain.invoke({
+      originalQuestion,
+      answer,
+      intentType,
     });
     console.log("Raw follow-up questions result:", result);
-    
+
     try {
       const questions = extractJSON(result);
       console.log("Parsed follow-up questions:", questions);
@@ -480,7 +540,9 @@ async function generateFollowUpQuestions(originalQuestion, answer, intentType) {
         // Limit to 5 questions max
         return questions.slice(0, 5);
       }
-      console.warn("Follow-up questions not in expected format, returning empty array");
+      console.warn(
+        "Follow-up questions not in expected format, returning empty array",
+      );
       return [];
     } catch (jsonError) {
       console.error("Error parsing follow-up questions JSON:", jsonError);
@@ -494,61 +556,86 @@ async function generateFollowUpQuestions(originalQuestion, answer, intentType) {
 
 //Chains for llm interactions
 const intentChain = intentPrompt.pipe(llm).pipe(new StringOutputParser());
-const userInfoChain = userInformationPrompt.pipe(llm).pipe(new StringOutputParser());
-const driveSearchChain = driveSearchPrompt.pipe(llm).pipe(new StringOutputParser());
-const driveSearchSelectionChain = driveSearchSelectionPrompt.pipe(llm).pipe(new StringOutputParser());
-const autoClassifyChain = autoClassifyPrompt.pipe(llm).pipe(new StringOutputParser());
-const followUpQuestionsChain = followUpQuestionsPrompt.pipe(llm).pipe(new StringOutputParser());
-const preemptivePromptingChain = preemptivePrompting.pipe(llm).pipe(new StringOutputParser());
-const threadHistoryChain = threadHistoryPrompt.pipe(llm).pipe(new StringOutputParser());
+const userInfoChain = userInformationPrompt
+  .pipe(llm)
+  .pipe(new StringOutputParser());
+const driveSearchChain = driveSearchPrompt
+  .pipe(llm)
+  .pipe(new StringOutputParser());
+const driveSearchSelectionChain = driveSearchSelectionPrompt
+  .pipe(llm)
+  .pipe(new StringOutputParser());
+const autoClassifyChain = autoClassifyPrompt
+  .pipe(llm)
+  .pipe(new StringOutputParser());
+const followUpQuestionsChain = followUpQuestionsPrompt
+  .pipe(llm)
+  .pipe(new StringOutputParser());
+const preemptivePromptingChain = preemptivePrompting
+  .pipe(llm)
+  .pipe(new StringOutputParser());
+const threadHistoryChain = threadHistoryPrompt
+  .pipe(llm)
+  .pipe(new StringOutputParser());
 
 //Main function to decide what to do with a message based on the parsed intent
-export async function answerQuestion(message, requesterSessionId = null, preemptive = false, threadHistory = []) {
-    try {
-        const requesterContext = await getRequesterAccessContext(requesterSessionId);
+export async function answerQuestion(
+  message,
+  requesterSessionId = null,
+  preemptive = false,
+  threadHistory = [],
+) {
+  try {
+    const requesterContext =
+      await getRequesterAccessContext(requesterSessionId);
 
-        if (isGreetingMessage(message)) {
-            return buildGreetingResponse(requesterContext);
-        }
+    if (isGreetingMessage(message)) {
+      return buildGreetingResponse(requesterContext);
+    }
 
-        if(threadHistory.length > 0) {
-          const threadHistoryResult = await threadHistoryChain.invoke({
-            message,
-            threadHistory: JSON.stringify(threadHistory)
-          });
-          console.log("Thread history chain result:", threadHistoryResult);
-          try {
-            const parsedThreadResult = extractJSON(threadHistoryResult);
-            
-            if (parsedThreadResult?.threadAnswer) {
-              const ans = {"answer": parsedThreadResult?.answer};
-              console.log("Answer found in thread history", ans);
-              return ans;
-            }
-          } catch (error) {
-            console.warn("Error parsing thread history chain result, proceeding with normal flow:", error);
-          }
-        }
+    if (threadHistory.length > 0) {
+      const threadHistoryResult = await threadHistoryChain.invoke({
+        message,
+        threadHistory: JSON.stringify(threadHistory),
+      });
+      console.log("Thread history chain result:", threadHistoryResult);
+      try {
+        const parsedThreadResult = extractJSON(threadHistoryResult);
 
-        const intent = await parseIntent(message);
-        console.log("Parsed intent:", intent);
-        if(preemptive && intent.type == 'GENERAL') {
-          return;
+        if (parsedThreadResult?.threadAnswer) {
+          const ans = { answer: parsedThreadResult?.answer };
+          console.log("Answer found in thread history", ans);
+          return ans;
         }
-        
-        let answer = "";
-        let intentType = "";
-        let suggestedUsers = [];
-        
-        //This takes care of all user information retrieval
-        if (intent.type === 'GET_USER' || intent.action === 'GET_USER') {
-            const data = await queryGraphQL(`{
+      } catch (error) {
+        console.warn(
+          "Error parsing thread history chain result, proceeding with normal flow:",
+          error,
+        );
+      }
+    }
+
+    const intent = await parseIntent(message);
+    console.log("Parsed intent:", intent);
+    if (preemptive && intent.type == "GENERAL") {
+      return;
+    }
+
+    let answer = "";
+    let intentType = "";
+    let suggestedUsers = [];
+    let githubSyncContext = null;
+
+    //This takes care of all user information retrieval
+    if (intent.type === "GET_USER" || intent.action === "GET_USER") {
+      const data = await queryGraphQL(`{
   getAllUserProfiles {
     id
     session_id
     userInfo {
       name
       email
+      github_username
       role
       classification_level
       experience_level
@@ -557,62 +644,98 @@ export async function answerQuestion(message, requesterSessionId = null, preempt
     hasCompletedIntake
   }
 }`);
-            const allProfiles = data?.getAllUserProfiles || [];
-            const accessibleProfiles = filterAccessibleProfiles(
-              allProfiles.filter(
-                (profile) =>
-                  profile?.hasCompletedIntake &&
-                  profile?.session_id !== requesterSessionId
-              ),
-              requesterContext.classification_level
-            );
+      const allProfiles = data?.getAllUserProfiles || [];
+      const accessibleProfiles = filterAccessibleProfiles(
+        allProfiles.filter(
+          (profile) =>
+            profile?.hasCompletedIntake &&
+            profile?.session_id !== requesterSessionId,
+        ),
+        requesterContext.classification_level,
+      );
 
-            if (accessibleProfiles.length === 0) {
-              answer = buildAccessDeniedMessage(message);
-            } else {
-              console.log("Accessible users:", JSON.stringify(accessibleProfiles,null,2));
-              if(!preemptive) {
-                const suggestionResult = await suggestUserForTopic(JSON.stringify(accessibleProfiles,null,2), message);
-                answer = suggestionResult.explanation;
-                suggestedUsers = suggestionResult.suggestions || [];
-              } else {
-                answer = await preemptivePromptingChain.invoke({
-                  topic: message,
-                  data: JSON.stringify(accessibleProfiles,null,2)
-                });
-              }
-              
-              console.log("User suggestion:", answer);
-            }
-            intentType = "GET_USER";
+      if (!preemptive) {
+        const githubRecommendations = recommendGitHubUsersForTopic(
+          message,
+          accessibleProfiles,
+          3,
+          requesterContext.active_github_repo,
+        );
 
-        //This takes care of searching Google Drive
-        } else if (intent.type === 'SEARCH_DRIVE' || intent.action === 'SEARCH_DRIVE') {
-            console.log("Searching drive for topic:", intent.query);
-            answer = await searchDriveForTopic(intent.query, requesterContext, preemptive);
-            intentType = "SEARCH_DRIVE";
+        if (githubRecommendations.suggestedUsers.length > 0) {
+          answer = githubRecommendations.answer;
+          suggestedUsers = githubRecommendations.suggestedUsers;
+          githubSyncContext = githubRecommendations.syncContext || null;
+        } else if (githubRecommendations.answer) {
+          answer = githubRecommendations.answer;
+          githubSyncContext = githubRecommendations.syncContext || null;
+        } else if (accessibleProfiles.length === 0) {
+          answer = buildAccessDeniedMessage(message);
         } else {
-            answer = "Sorry, there is no documentation available for that topic and cannot reliably give you information. Please ask about a different topic or try rephrasing your question.";
-            intentType = "GENERAL";
+          console.log(
+            "Accessible users:",
+            JSON.stringify(accessibleProfiles, null, 2),
+          );
+          const suggestionResult = await suggestUserForTopic(
+            JSON.stringify(accessibleProfiles, null, 2),
+            message,
+          );
+          answer = suggestionResult.explanation;
+          suggestedUsers = suggestionResult.suggestions || [];
         }
-        
-        // Generate follow-up questions
-        let followUpQuestions = null;
-        if (!preemptive) {
-          followUpQuestions = await generateFollowUpQuestions(message, answer, intentType);
-        }
-        // Return object with answer, follow-up questions, and any structured user suggestions
-        return {
-            answer,
-            followUpQuestions,
-            suggestedUsers,
-        };
-    } catch (error) {
-        console.error("Error in answerQuestion:", error);
-        return {
-            answer: "Sorry, I couldn't understand your question. Please try rephrasing it.",
-            followUpQuestions: [],
-            suggestedUsers: [],
-        };
+      } else if (accessibleProfiles.length === 0) {
+        answer = buildAccessDeniedMessage(message);
+      } else {
+        answer = await preemptivePromptingChain.invoke({
+          topic: message,
+          data: JSON.stringify(accessibleProfiles, null, 2),
+        });
+      }
+      console.log("User suggestion:", answer);
+      intentType = "GET_USER";
+
+      //This takes care of searching Google Drive
+    } else if (
+      intent.type === "SEARCH_DRIVE" ||
+      intent.action === "SEARCH_DRIVE"
+    ) {
+      console.log("Searching drive for topic:", intent.query);
+      answer = await searchDriveForTopic(
+        intent.query,
+        requesterContext,
+        preemptive,
+      );
+      intentType = "SEARCH_DRIVE";
+    } else {
+      answer =
+        "Sorry, there is no documentation available for that topic and cannot reliably give you information. Please ask about a different topic or try rephrasing your question.";
+      intentType = "GENERAL";
     }
+
+    // Generate follow-up questions
+    let followUpQuestions = null;
+    if (!preemptive) {
+      followUpQuestions = await generateFollowUpQuestions(
+        message,
+        answer,
+        intentType,
+      );
+    }
+    // Return object with answer, follow-up questions, and any structured user suggestions
+    return {
+      answer,
+      followUpQuestions,
+      suggestedUsers,
+      githubSyncContext,
+    };
+  } catch (error) {
+    console.error("Error in answerQuestion:", error);
+    return {
+      answer:
+        "Sorry, I couldn't understand your question. Please try rephrasing it.",
+      followUpQuestions: [],
+      suggestedUsers: [],
+      githubSyncContext: null,
+    };
+  }
 }

@@ -82,14 +82,16 @@ export const root = {
       console.log('Creating user info for profile ID:', profileId);
       const infoResult = await runQuery(
         `INSERT INTO user_info (
-          profile_id, session_id, name, email, role, classification_level, experience_level, department,
+          profile_id, session_id, name, email, github_username, active_github_repo, role, classification_level, experience_level, department,
           areas_of_interest, technical_skills, learning_goals, preferred_content_complexity
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           profileId,
           input.session_id,
           input.name || null,
           input.email || null,
+          input.github_username || null,
+          input.active_github_repo || null,
           input.role,
           classificationLevel,
           input.experience_level,
@@ -150,13 +152,15 @@ export const root = {
         // Update existing user_info
         await runQuery(
           `UPDATE user_info SET
-            name = ?, email = ?, role = ?, classification_level = ?, experience_level = ?, department = ?,
+            name = ?, email = ?, github_username = ?, active_github_repo = ?, role = ?, classification_level = ?, experience_level = ?, department = ?,
             areas_of_interest = ?, technical_skills = ?, learning_goals = ?, preferred_content_complexity = ?,
             updated_at = CURRENT_TIMESTAMP
            WHERE profile_id = ?`,
           [
             input.name || null,
             input.email || null,
+            input.github_username || null,
+            input.active_github_repo || null,
             input.role,
             classificationLevel,
             input.experience_level,
@@ -172,14 +176,16 @@ export const root = {
         // Create new user_info
         await runQuery(
           `INSERT INTO user_info (
-            profile_id, session_id, name, email, role, classification_level, experience_level, department,
+            profile_id, session_id, name, email, github_username, active_github_repo, role, classification_level, experience_level, department,
             areas_of_interest, technical_skills, learning_goals, preferred_content_complexity
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             profile.id,
             session_id,
             input.name || null,
             input.email || null,
+            input.github_username || null,
+            input.active_github_repo || null,
             input.role,
             classificationLevel,
             input.experience_level,
