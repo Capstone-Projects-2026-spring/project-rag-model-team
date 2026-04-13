@@ -155,4 +155,28 @@ export default function (app) {
       ]
     });
   });
+
+  // ============= Google Upload =============
+  app.event("message", async ({ event }) => {
+    if (!event.files) return;
+
+    for (const file of event.files) {
+      const url = file.url_private;
+      const filePath = `./tmp/${file.name}`;
+
+      const response = await axios.get(url, {
+        responseType: "stream",
+        headers: {
+          Authorization: `Bearer ${process.env.SLACK_BOT_TOKEN}`,
+        },
+      });
+
+      const writer = fs.createWriteStream(filePath);
+      response.data.pipe(writer);
+
+      await new Promise((resolve) => writer.on("finish", resolve));
+
+      await uploadToDrive(filePath, file.name);
+    }
+  });
 }

@@ -123,3 +123,24 @@ export async function getFileMetadata(fileId) {
     throw error;
   }
 }
+
+async function uploadToDrive(filePath, fileName) {
+  const auth = new google.auth.GoogleAuth({
+    keyFile: "./service-account.json",
+    scopes: ["https://www.googleapis.com/auth/drive"],
+  });
+
+  const drive = google.drive({ version: "v3", auth });
+
+  const response = await drive.files.create({
+    requestBody: {
+      name: fileName,
+      parents: ["YOUR_FOLDER_ID"], // optional
+    },
+    media: {
+      body: fs.createReadStream(filePath),
+    },
+  });
+
+  console.log("Uploaded to Drive:", response.data.id);
+}
