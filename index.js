@@ -2,8 +2,7 @@ import { App } from "@slack/bolt";
 import dotenv from "dotenv";
 import { queryGraphQL } from "./logic/graphql_setup/graphql_client.js";
 import slackHandlers from "./google_api/slack.js";
-import axios from "axios";
-import fs from "fs";
+
 import {
   answerQuestion,
   autoClassifyDocument,

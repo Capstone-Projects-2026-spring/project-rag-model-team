@@ -1,6 +1,76 @@
 import * as driveService from "./driveService.js";
+import axios from "axios";
+import fs from "fs";
 
 export default function (app) {
+  // Listen for file_shared events
+  app.event('file_shared', async ({ event, client, logger }) => {
+    try {
+      // Get file info
+      const fileId = event.file_id;
+      const fileInfo = await client.files.info({ file: fileId });
+      const file = fileInfo.file;
+
+      // Get download URL and file name
+      const url = file.url_private_download;
+      const fileName = file.name;
+
+
+
+      // Download the file as a stream from Slack
+      const response = await axios.get(url, {
+        responseType: 'stream',
+        headers: { Authorization: `Bearer ${process.env.SLACK_BOT_TOKEN}` }
+      });
+
+      // Upload the stream directly to Google Drive
+      const { uploadStreamToDrive } = await import('./driveService.js');
+      const driveRes = await uploadStreamToDrive(response.data, fileName);
+
+      // Notify user in the channel
+      await client.chat.postMessage({
+        channel: file.user,
+        text: `:inbox_tray: Your file *${fileName}* was uploaded to Google Drive!\n<${driveRes.webViewLink}|View in Drive>`
+      });
+    } catch (error) {
+      logger.error('Error uploading file to Drive:', error);
+    }
+  });
+
+   // Also handle files sent as part of a message (e.g., in DMs or channels)
+  app.event('message', async ({ event, client, logger }) => {
+    try {
+      // Ignore bot messages and messages without files
+      if (event.subtype === 'bot_message' || !event.files || !Array.isArray(event.files)) return;
+
+      for (const file of event.files) {
+        // Only handle files that are not already handled by file_shared
+        if (!file.url_private_download || !file.name) continue;
+
+        const url = file.url_private_download;
+        const fileName = file.name;
+
+        // Download the file as a stream from Slack
+        const response = await axios.get(url, {
+          responseType: 'stream',
+          headers: { Authorization: `Bearer ${process.env.SLACK_BOT_TOKEN}` }
+        });
+
+        // Upload the stream directly to Google Drive
+        const { uploadStreamToDrive } = await import('./driveService.js');
+        const driveRes = await uploadStreamToDrive(response.data, fileName);
+
+        // Notify user in the channel or DM
+        await client.chat.postMessage({
+          channel: event.channel,
+          text: `:inbox_tray: Your file *${fileName}* was uploaded to Google Drive!\n<${driveRes.webViewLink}|View in Drive>`
+        });
+      }
+    } catch (error) {
+      logger.error('Error uploading file from message to Drive:', error);
+    }
+  });
+
   // Command to check Google Drive connection status
   app.command("/drive-status", async ({ ack, respond }) => {
     await ack();
@@ -162,21 +232,7 @@ export default function (app) {
 
     for (const file of event.files) {
       const url = file.url_private;
-      const filePath = `./tmp/${file.name}`;
-
-      const response = await axios.get(url, {
-        responseType: "stream",
-        headers: {
-          Authorization: `Bearer ${process.env.SLACK_BOT_TOKEN}`,
-        },
-      });
-
-      const writer = fs.createWriteStream(filePath);
-      response.data.pipe(writer);
-
-      await new Promise((resolve) => writer.on("finish", resolve));
-
-      await uploadToDrive(filePath, file.name);
+      // Use direct streaming method instead (handled above)
     }
   });
 }

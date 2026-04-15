@@ -1,3 +1,23 @@
+// Upload a readable stream directly to Drive
+export async function uploadStreamToDrive(readStream, fileName) {
+  const drive = await getDriveClient();
+  const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID;
+  const requestBody = {
+    name: fileName,
+  };
+  if (folderId) {
+    requestBody.parents = [folderId];
+  }
+  const response = await drive.files.create({
+    requestBody,
+    media: {
+      body: readStream,
+    },
+    fields: 'id, webViewLink'
+  });
+  console.log("Uploaded to Drive (stream):", response.data.id);
+  return response.data;
+}
 import { google } from "googleapis";
 import fs from 'fs';
 import path from 'path';
@@ -16,7 +36,7 @@ try {
     const keyFile = JSON.parse(fs.readFileSync(SERVICE_ACCOUNT_KEY_PATH, 'utf8'));
     auth = new google.auth.GoogleAuth({
       credentials: keyFile,
-      scopes: ['https://www.googleapis.com/auth/drive.readonly']
+      scopes: ['https://www.googleapis.com/auth/drive.file']
     });
     isInitialized = true;
     console.log('✅ Service account loaded successfully');
@@ -124,23 +144,22 @@ export async function getFileMetadata(fileId) {
   }
 }
 
-async function uploadToDrive(filePath, fileName) {
-  const auth = new google.auth.GoogleAuth({
-    keyFile: "./service-account.json",
-    scopes: ["https://www.googleapis.com/auth/drive"],
-  });
-
-  const drive = google.drive({ version: "v3", auth });
-
+export async function uploadToDrive(filePath, fileName) {
+  const drive = await getDriveClient();
+  const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID;
+  const requestBody = {
+    name: fileName,
+  };
+  if (folderId) {
+    requestBody.parents = [folderId];
+  }
   const response = await drive.files.create({
-    requestBody: {
-      name: fileName,
-      parents: ["YOUR_FOLDER_ID"], // optional
-    },
+    requestBody,
     media: {
       body: fs.createReadStream(filePath),
     },
+    fields: 'id, webViewLink'
   });
-
   console.log("Uploaded to Drive:", response.data.id);
+  return response.data;
 }
