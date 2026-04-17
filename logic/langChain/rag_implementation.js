@@ -16,6 +16,16 @@ import {
   upsertDocumentTags,
   getDocumentTags,
 } from '../database/documentTagService.js';
+import {
+  searchWeb,
+  searchAndFetchWeb,
+} from '../webSearchService.js';
+import {
+  webSearchQueryPrompt as webSearchQueryTemplate,
+  webContentSummarizationPrompt as webSummarizationTemplate,
+  formatWebContentForLLM,
+  createWebSourceAttribution,
+} from '../webSearchPrompts.js';
 
 dotenv.config();
 
@@ -60,8 +70,16 @@ const intentPrompt = PromptTemplate.fromTemplate(`
   - Search Google Drive:  {{"type": "SEARCH_DRIVE", "query": "<search terms>"}}
   - General question:     {{"type": "GENERAL"}}
 
-  JSON only, no explanation. Information about people is most likely suited to GET_USER (words like anyone, who, or someone may be key), and information about projects or documents is most likely suited to SEARCH_DRIVE (words like project, document, or goal may be useful), but use your judgement based on the content of the message - you are trying to see what you can help with. Only use GENERAL as a last resort.
+  JSON only, no explanation. 
+  
+  Guidelines:
+  - GET_USER: Questions about people, team members, or expertise (keywords: who, anyone, person, team lead, expert, contact)
+  - SEARCH_DRIVE: Most other questions about information, topics, concepts, or documentation (keywords: information, documentation, how to, what is, explain, tell me about, do you have, find, search, look up, or any knowledge question)
+  - GENERAL: Only use as a last resort if the message is off-topic, unclear, or not a question
+  
+  Treat most questions as potential documentation searches so we can offer web search if internal docs don't exist.
 `);
+
 
 //Natural Language
 const userInformationPrompt = PromptTemplate.fromTemplate(`
@@ -126,6 +144,27 @@ function stripCodeFences(str) {
   return str.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
 }
 
+//JSON ONLY - Confidence scoring
+const confidenceCheckPrompt = PromptTemplate.fromTemplate(`
+You are evaluating whether a set of documents adequately answer a user's question.
+
+User's Question: {question}
+Documents Retrieved: {documents}
+
+Rate your CONFIDENCE (0-100) that these documents actually answer the user's question.
+
+Return ONLY a JSON object with this format:
+{{"confidence": <number 0-100>, "reason": "<brief reason>"}}
+
+Guidelines:
+- 80-100: Documents directly answer the question with specific information
+- 50-79: Documents tangentially relate but don't fully address the question
+- 20-49: Documents are only loosely related
+- 0-19: Documents don't address the question at all
+
+Be strict. If the documents are about a project but don't explain the topic the user asked about, rate it low.
+`);
+
 //JSON ONLY
 const followUpQuestionsPrompt = PromptTemplate.fromTemplate(`
     Based on the user's original question and the answer provided, generate 3-5 relevant follow-up questions that would help the user explore related topics or dive deeper into the subject.
@@ -157,6 +196,10 @@ const preemptivePrompting = PromptTemplate.fromTemplate(`
     If you cannot make any suggestions based on the content of the message, please say "IDK" and only "IDK".
 `);
 
+// Web Search Prompts
+const webSearchQueryPrompt = PromptTemplate.fromTemplate(webSearchQueryTemplate);
+const webContentSummarizationPrompt = PromptTemplate.fromTemplate(webSummarizationTemplate);
+
 //Functions to call the chains and decide what to do with the results
 
 async function parseIntent(message) {
@@ -184,6 +227,11 @@ async function suggestUserForTopic(userInfo, topic) {
 
 function isGreetingMessage(message) {
   return GREETING_PATTERN.test(String(message || '').trim());
+}
+
+function isStandaloneConfirmation(message) {
+  const normalized = String(message || '').trim().toLowerCase();
+  return normalized === 'yes' || normalized === 'no';
 }
 
 function buildGreetingResponse(requesterContext) {
@@ -294,6 +342,73 @@ function enrichFilesWithTags(annotatedFiles) {
   });
 }
 
+/**
+ * Search the web and synthesize results into an answer
+ * @param {string} originalQuestion - User's original question
+ * @returns {Promise<Object>} Object with { answer, sources, isWebResult: true }
+ */
+async function searchWebForTopic(originalQuestion) {
+  try {
+    console.log("Searching web for:", originalQuestion);
+    
+    // Generate an optimized search query
+    const searchQuery = await webSearchQueryChain.invoke({ userQuestion: originalQuestion });
+    console.log("Generated search query:", searchQuery);
+
+    // Search and fetch web content
+    const webResults = await searchAndFetchWeb(searchQuery.trim(), 3);
+    console.log(`Fetched ${webResults.length} web results`);
+    
+    if (!webResults || webResults.length === 0) {
+      console.warn("No web results found");
+      return {
+        answer: "Sorry, I couldn't find relevant information online either.",
+        sources: [],
+        isWebResult: true,
+      };
+    }
+
+    // Format web content for LLM
+    const formattedContent = formatWebContentForLLM(webResults);
+    console.log("Formatted content length:", formattedContent.length);
+    
+    // Summarize web content into answer
+    console.log("Invoking webContentSummarizationChain...");
+    const synthesizedAnswer = await webContentSummarizationChain.invoke({
+      userQuestion: originalQuestion,
+      webContent: formattedContent,
+    });
+    console.log("Synthesized answer length:", synthesizedAnswer.length);
+    console.log("Synthesized answer:", synthesizedAnswer.substring(0, 200));
+
+    // Create source attribution
+    const sourceAttribution = createWebSourceAttribution(webResults);
+    console.log("Source attribution:", sourceAttribution);
+
+    const finalAnswer = `${synthesizedAnswer}\n\n${sourceAttribution}`;
+    console.log("Final answer length:", finalAnswer.length);
+
+    return {
+      answer: finalAnswer,
+      sources: webResults,
+      isWebResult: true,
+    };
+  } catch (error) {
+    console.error("Web search error:", error.message);
+    console.error("Full error:", error);
+    return {
+      answer: "Sorry, I couldn't search online at this time. Please try rephrasing your question.",
+      sources: [],
+      isWebResult: true,
+    };
+  }
+}
+
+/**
+ * Marker object to indicate no internal results found
+ */
+const NO_INTERNAL_RESULTS = Symbol('NO_INTERNAL_RESULTS');
+
 async function searchDriveForTopic(topic, requesterContext, preemptive = false) {
   const files = await listFiles();
   // Annotate with Drive metadata first, then override with DB values (DB takes priority)
@@ -327,7 +442,7 @@ async function searchDriveForTopic(topic, requesterContext, preemptive = false) 
   }
 
   if (!Array.isArray(fileSuggestions) || fileSuggestions.length === 0) {
-    return "Sorry, I couldn't find relevant information in our documents.";
+    return NO_INTERNAL_RESULTS;
   }
 
   const enrichedFilesById = new Map(enrichedFiles.map(file => [file.id, file]));
@@ -363,9 +478,37 @@ async function searchDriveForTopic(topic, requesterContext, preemptive = false) 
       return await answerDriveSearchQuestion(fileContents, topic);
     } else {
       console.log("Invoking preemptive prompting chain with file contents");
-      return await preemptivePromptingChain.invoke({
+      const preemptiveResult = await preemptivePromptingChain.invoke({
                   topic: topic,
                   data: fileContents});
+      
+      // Apply full relevance check to preemptive mode too
+      const trimmedResult = preemptiveResult.trim();
+      
+      if (trimmedResult === "IDK" || trimmedResult.toLowerCase().includes("don't know")) {
+        return NO_INTERNAL_RESULTS;
+      }
+      
+      // Check if mostly questions
+      const questionCount = (trimmedResult.match(/\?/g) || []).length;
+      const isMainlyQuestions = questionCount > 1 && trimmedResult.length < (questionCount * 50);
+      if (isMainlyQuestions) {
+        console.log(`Preemptive answer is mostly questions: offering web search`);
+        return NO_INTERNAL_RESULTS;
+      }
+      
+      // Check keyword relevance
+      const topicWords = topic.toLowerCase().split(/\s+/).filter(w => w.length > 3);
+      const answerLower = trimmedResult.toLowerCase();
+      const topicMatches = topicWords.filter(word => answerLower.includes(word)).length;
+      const matchPercentage = topicMatches / Math.max(topicWords.length, 1);
+      
+      if (matchPercentage < 0.5 && topicWords.length > 1) {
+        console.log(`Low relevance in preemptive (${Math.round(matchPercentage * 100)}%): offering web search`);
+        return NO_INTERNAL_RESULTS;
+      }
+      
+      return preemptiveResult;
     }
   } catch (error) {
     console.error("Error retrieving file contents:", error);
@@ -375,12 +518,37 @@ async function searchDriveForTopic(topic, requesterContext, preemptive = false) 
 
 async function answerDriveSearchQuestion(fileContents, topic) {
   try {
-        const finalAnswer = await driveSearchSelectionChain.invoke({ content: fileContents, topic });
-        if (finalAnswer.trim() === "IDK") {
-            return "Sorry, I couldn't find relevant information in our documents.";
-        } else {
-            return finalAnswer;
+        // First, check confidence that documents answer the question
+        const confidenceCheckResult = await confidenceCheckChain.invoke({
+          question: topic,
+          documents: fileContents.slice(0, 2000) // Limit to avoid token overload
+        });
+        
+        let confidence = 0;
+        try {
+          const parsed = JSON.parse(stripCodeFences(confidenceCheckResult));
+          confidence = parsed.confidence || 0;
+          console.log(`Confidence check: ${confidence}% - ${parsed.reason}`);
+        } catch (e) {
+          console.warn("Could not parse confidence check, defaulting to low confidence");
+          confidence = 20;
         }
+        
+        // If confidence is low (below 40%), offer web search
+        if (confidence < 40) {
+          console.log(`Low confidence (${confidence}%): offering web search`);
+          return NO_INTERNAL_RESULTS;
+        }
+        
+        const finalAnswer = await driveSearchSelectionChain.invoke({ content: fileContents, topic });
+        const trimmedAnswer = finalAnswer.trim();
+        
+        // Additional check: if LLM says it doesn't know
+        if (trimmedAnswer === "IDK" || trimmedAnswer.toLowerCase().includes("don't know") || trimmedAnswer.toLowerCase().includes("cannot find")) {
+            return NO_INTERNAL_RESULTS;
+        }
+        
+        return finalAnswer;
     } catch (error) {
         console.error("Error invoking driveSearchSelectionChain:", error);
         return "Sorry, I couldn't process the information from the documents.";
@@ -398,7 +566,15 @@ async function generateFollowUpQuestions(originalQuestion, answer, intentType) {
     console.log("Raw follow-up questions result:", result);
     
     try {
-      const questions = JSON.parse(result);
+      // Extract the first valid JSON array from the result
+      // Sometimes LLM returns multiple arrays, we only want the first one
+      const jsonMatch = result.match(/\[[\s\S]*?\]/);
+      if (!jsonMatch) {
+        console.warn("No JSON array found in follow-up questions result");
+        return [];
+      }
+      
+      const questions = JSON.parse(jsonMatch[0]);
       if (Array.isArray(questions) && questions.length > 0) {
         // Limit to 5 questions max
         return questions.slice(0, 5);
@@ -421,8 +597,11 @@ const userInfoChain = userInformationPrompt.pipe(llm).pipe(new StringOutputParse
 const driveSearchChain = driveSearchPrompt.pipe(llm).pipe(new StringOutputParser());
 const driveSearchSelectionChain = driveSearchSelectionPrompt.pipe(llm).pipe(new StringOutputParser());
 const autoClassifyChain = autoClassifyPrompt.pipe(llm).pipe(new StringOutputParser());
+const confidenceCheckChain = confidenceCheckPrompt.pipe(llm).pipe(new StringOutputParser());
 const followUpQuestionsChain = followUpQuestionsPrompt.pipe(llm).pipe(new StringOutputParser());
 const preemptivePromptingChain = preemptivePrompting.pipe(llm).pipe(new StringOutputParser());
+const webSearchQueryChain = webSearchQueryPrompt.pipe(llm).pipe(new StringOutputParser());
+const webContentSummarizationChain = webContentSummarizationPrompt.pipe(llm).pipe(new StringOutputParser());
 
 //Main function to decide what to do with a message based on the parsed intent
 export async function answerQuestion(message, requesterSessionId = null, preemptive = false) {
@@ -431,6 +610,25 @@ export async function answerQuestion(message, requesterSessionId = null, preempt
 
         if (isGreetingMessage(message)) {
             return buildGreetingResponse(requesterContext);
+        }
+
+        if (isStandaloneConfirmation(message)) {
+            if (preemptive) {
+              return;
+            }
+
+            const normalized = String(message || '').trim().toLowerCase();
+            if (normalized === 'no') {
+              return {
+                answer: "Sorry, I couldn't find relevant information in our internal documents. Feel free to try rephrasing your question or ask about something else.",
+                followUpQuestions: []
+              };
+            }
+
+            return {
+              answer: 'If you are responding to a web-search prompt, reply with yes/no directly in that thread. Otherwise, please ask a full question so I can help.',
+              followUpQuestions: []
+            };
         }
 
         const intent = await parseIntent(message);
@@ -489,7 +687,18 @@ export async function answerQuestion(message, requesterSessionId = null, preempt
         //This takes care of searching Google Drive
         } else if (intent.type === 'SEARCH_DRIVE' || intent.action === 'SEARCH_DRIVE') {
             console.log("Searching drive for topic:", intent.query);
-            answer = await searchDriveForTopic(intent.query, requesterContext, preemptive);
+            const driveResult = await searchDriveForTopic(intent.query, requesterContext, preemptive);
+            
+            // If no internal results, offer web search
+            if (driveResult === NO_INTERNAL_RESULTS) {
+              answer = {
+                internal: "Sorry, I couldn't find relevant information in our internal documents.",
+                offerWeb: true,
+                query: intent.query,
+              };
+            } else {
+              answer = driveResult;
+            }
             intentType = "SEARCH_DRIVE";
         } else {
             answer = "Sorry, there is no documentation available for that topic and cannot reliably give you information. Please ask about a different topic or try rephrasing your question.";
@@ -514,3 +723,6 @@ export async function answerQuestion(message, requesterSessionId = null, preempt
         };
     }
 }
+
+// Export web search utilities for use in index.js (thread listener)
+export { NO_INTERNAL_RESULTS, searchWebForTopic };
