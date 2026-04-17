@@ -14,6 +14,7 @@ const chainHandlers = {
   userInfo: jest.fn(),
   driveSearch: jest.fn(),
   driveSelection: jest.fn(),
+  confidenceCheck: jest.fn(),
   autoClassify: jest.fn(),
   followUpQuestions: jest.fn(),
   threadHistory: jest.fn(),
@@ -34,6 +35,10 @@ function getChainHandler(template) {
 
   if (template.includes("distill the most relevant information")) {
     return chainHandlers.driveSelection;
+  }
+
+  if (template.includes("Rate your CONFIDENCE (0-100)")) {
+    return chainHandlers.confidenceCheck;
   }
 
   if (template.includes("classifying a document for a software team")) {
@@ -111,6 +116,7 @@ beforeEach(() => {
   chainHandlers.userInfo.mockResolvedValue("No matching users.");
   chainHandlers.driveSearch.mockResolvedValue("[]");
   chainHandlers.driveSelection.mockResolvedValue("IDK");
+  chainHandlers.confidenceCheck.mockResolvedValue('{"confidence":85,"reason":"Documents directly answer the question."}');
   chainHandlers.autoClassify.mockResolvedValue('{"classification_level":"internal","tags":[]}');
   chainHandlers.threadHistory.mockResolvedValue('{"threadAnswer":false}');
   // Default: files not yet in DB, so enrichment triggers auto-classify
@@ -123,6 +129,14 @@ beforeEach(() => {
 });
 
 describe("answerQuestion access filtering", () => {
+  it("returns low-confidence fallback for standalone no confirmation", async () => {
+    const response = await answerQuestion("no");
+
+    expect(response.answer).toContain("couldn't find relevant information in our internal documents");
+    expect(response.followUpQuestions).toEqual([]);
+    expect(chainHandlers.intent).not.toHaveBeenCalled();
+  });
+
   it("returns a greeting response without sending greetings through the RAG prompt flow", async () => {
     mockQueryGraphQL.mockResolvedValueOnce({
       getUserProfile: null,
