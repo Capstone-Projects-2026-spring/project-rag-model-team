@@ -32,10 +32,13 @@ const app = new App({
   appToken: process.env.SLACK_APP_TOKEN,
 });
 
+
 let db;
 
 // Setup Slack command handlers
 slackHandlers(app);
+
+
 
 // ================ Helper functions =====================
 
@@ -51,11 +54,14 @@ const interactionLogMutation = `
 `;
 
 function logInteraction(userId, message, type) {
+  // Fire and forget - don't block the handler
   queryGraphQL(interactionLogMutation, {
     sessionID: userId,
     interactionType: type,
     message,
-  }).catch((err) => console.warn("Interaction logging failed:", err.message));
+  })
+    .then(() => console.log("Interaction logged:", type))
+    .catch((err) => console.warn("Interaction logging failed:", err.message || err));
 }
 
 async function fetchUserProfile(sessionId) {
@@ -565,6 +571,36 @@ app.event("app_mention", async ({ event, say, client }) => {
     !normalizeGitHubUsername(requesterProfile?.userInfo?.github_username);
 
   const threadTs = getThreadTs(event);
+  const answerSection = {
+    type: "section",
+    text: {
+      type: "mrkdwn",
+      text: buildTextResponseMessage(response, shouldShowGitHubReminder),
+    },
+  };
+  let feedbackBlocks = [
+    answerSection,
+    {
+      type: "actions",
+      block_id: "feedback_block",
+      elements: [
+        {
+          type: "button",
+          text: { type: "plain_text", text: "👍 Helpful" },
+          style: "primary",
+          value: JSON.stringify({ helpful: true, q: question }),
+          action_id: "feedback_helpful"
+        },
+        {
+          type: "button",
+          text: { type: "plain_text", text: "👎 Not Helpful" },
+          style: "danger",
+          value: JSON.stringify({ helpful: false, q: question }),
+          action_id: "feedback_not_helpful"
+        }
+      ]
+    }
+  ];
   if (
     Array.isArray(response.suggestedUsers) &&
     response.suggestedUsers.length > 0
@@ -579,17 +615,14 @@ app.event("app_mention", async ({ event, say, client }) => {
     if (shouldShowGitHubReminder) {
       blocks = [...getGitHubLinkReminderBlocks(), ...blocks];
     }
+    blocks = [answerSection, ...blocks, feedbackBlocks[1]];
     await say({
       blocks,
       text: response.answer || "I apologize, I was not able to answer this",
       thread_ts: threadTs,
     });
   } else {
-    const messageText = buildTextResponseMessage(
-      response,
-      shouldShowGitHubReminder,
-    );
-    await say({ text: messageText, thread_ts: threadTs });
+    await say({ blocks: feedbackBlocks, text: buildTextResponseMessage(response, shouldShowGitHubReminder), thread_ts: threadTs });
   }
 });
 
@@ -641,6 +674,36 @@ app.event("message", async ({ event, say, client }) => {
     const response = await answerQuestion(event.text, userId, false);
     const threadTs = getThreadTs(event);
 
+    const answerSection = {
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: buildTextResponseMessage(response),
+      },
+    };
+    let feedbackBlocks = [
+      answerSection,
+      {
+        type: "actions",
+        block_id: "feedback_block",
+        elements: [
+          {
+            type: "button",
+            text: { type: "plain_text", text: "👍 Helpful" },
+            style: "primary",
+            value: JSON.stringify({ helpful: true, q: event.text }),
+            action_id: "feedback_helpful"
+          },
+          {
+            type: "button",
+            text: { type: "plain_text", text: "👎 Not Helpful" },
+            style: "danger",
+            value: JSON.stringify({ helpful: false, q: event.text }),
+            action_id: "feedback_not_helpful"
+          }
+        ]
+      }
+    ];
     if (
       Array.isArray(response.suggestedUsers) &&
       response.suggestedUsers.length > 0
@@ -652,13 +715,81 @@ app.event("message", async ({ event, say, client }) => {
         event.text,
         response,
       );
-      await say({ blocks, text: response.answer, thread_ts: threadTs });
+      await say({ blocks: [answerSection, ...blocks, feedbackBlocks[1]], text: response.answer, thread_ts: threadTs });
       return;
     } else {
-      const messageText = buildTextResponseMessage(response);
-      await say({ text: messageText, thread_ts: threadTs });
+      await say({ blocks: feedbackBlocks, text: buildTextResponseMessage(response), thread_ts: threadTs });
       return;
     }
+// ============= Feedback Button Handlers =============
+
+app.action("feedback_helpful", async ({ ack, body, client }) => {
+  console.log("=== FEEDBACK HELPFUL BUTTON CLICKED ===");
+  await ack();
+  console.log("=== ACK SENT ===");
+  try {
+    const userId = body.user?.id;
+    if (!userId) {
+      console.error("No user ID in feedback_helpful action body");
+      return;
+    }
+    const channelId = body.channel?.id || userId;
+    let q = "";
+    if (body.actions && Array.isArray(body.actions) && body.actions[0]?.value) {
+      try {
+        const parsed = JSON.parse(body.actions[0].value);
+        q = parsed.q || "";
+      } catch (parseErr) {
+        console.warn("Failed to parse feedback value:", parseErr, "Raw value:", body.actions[0].value);
+      }
+    }
+    console.log("Feedback - helpful:", { userId, channelId, q, messageTs: body.message?.ts });
+    logInteraction(userId, `FEEDBACK: helpful | Q: ${q}`, "feedback");
+    const result = await client.chat.postEphemeral({
+      channel: channelId,
+      user: userId,
+      text: "Thank you for your feedback! 👍",
+      thread_ts: body.message?.thread_ts || body.message?.ts,
+    });
+    console.log("Ephemeral message sent:", result);
+  } catch (error) {
+    console.error("Error handling feedback_helpful:", error.message, error.stack);
+  }
+});
+
+app.action("feedback_not_helpful", async ({ ack, body, client }) => {
+  console.log("=== FEEDBACK NOT HELPFUL BUTTON CLICKED ===");
+  await ack();
+  console.log("=== ACK SENT ===");
+  try {
+    const userId = body.user?.id;
+    if (!userId) {
+      console.error("No user ID in feedback_not_helpful action body");
+      return;
+    }
+    const channelId = body.channel?.id || userId;
+    let q = "";
+    if (body.actions && Array.isArray(body.actions) && body.actions[0]?.value) {
+      try {
+        const parsed = JSON.parse(body.actions[0].value);
+        q = parsed.q || "";
+      } catch (parseErr) {
+        console.warn("Failed to parse feedback value:", parseErr, "Raw value:", body.actions[0].value);
+      }
+    }
+    console.log("Feedback - not helpful:", { userId, channelId, q, messageTs: body.message?.ts });
+    logInteraction(userId, `FEEDBACK: not helpful | Q: ${q}`, "feedback");
+    const result = await client.chat.postEphemeral({
+      channel: channelId,
+      user: userId,
+      text: "Thank you for your feedback! We'll use it to improve. 👎",
+      thread_ts: body.message?.thread_ts || body.message?.ts,
+    });
+    console.log("Ephemeral message sent:", result);
+  } catch (error) {
+    console.error("Error handling feedback_not_helpful:", error.message, error.stack);
+  }
+});
   } catch (error) {
     console.error("Error handling DM:", error);
     await say("Sorry, I encountered an error. Please try again.");
@@ -1423,8 +1554,10 @@ function getIntakeModal() {
 // ============= Start the Bot =============
 let BOT_USER_ID;
 (async () => {
+  console.log("🚀 Starting bot...");
   db = initDatabase();
   startGraphQL();
+  console.log("✓ Handlers pre-registered (feedback_helpful, feedback_not_helpful)");
   await app.start();
   const auth = await app.client.auth.test();
   BOT_USER_ID = auth.user_id;
