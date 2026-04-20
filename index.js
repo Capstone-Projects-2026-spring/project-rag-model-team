@@ -468,18 +468,21 @@ function buildUserSuggestionBlocks(
 }
 
 function appendFollowUpQuestions(blocks, followUpQuestions) {
-  if (Array.isArray(followUpQuestions) && followUpQuestions.length > 0) {
-    blocks.push({ type: "divider" });
-    blocks.push({
-      type: "section",
-      text: {
-        type: "mrkdwn",
-        text: `*You might also want to ask:*
-${followUpQuestions.map((question, index) => `${index + 1}. ${question}`).join("\n")}`,
-      },
-    });
-  }
-
+  if (!Array.isArray(followUpQuestions) || followUpQuestions.length === 0) return blocks;
+  blocks.push({ type: "divider" });
+  blocks.push({
+    type: "section",
+    text: { type: "mrkdwn", text: "*You might also want to ask:*" },
+  });
+  blocks.push({
+    type: "actions",
+    elements: followUpQuestions.slice(0, 5).map((q) => ({
+      type: "button",
+      text: { type: "plain_text", text: q.length > 75 ? q.slice(0, 72) + "…" : q },
+      action_id: "ask_followup_question",
+      value: q,
+    })),
+  });
   return blocks;
 }
 
@@ -1610,6 +1613,24 @@ function getIntakeModal() {
     ],
   };
 }
+
+// ============= Follow-up Question Button Handler =============
+
+app.action("ask_followup_question", async ({ ack, body, client }) => {
+  await ack();
+  const question = body.actions[0].value;
+  const userId = body.user.id;
+  const channelId = body.channel?.id || userId;
+
+  try {
+    logInteraction(userId, question);
+    const response = await answerQuestion(question, userId);
+    const text = buildTextResponseMessage(response);
+    await client.chat.postEphemeral({ channel: channelId, user: userId, text });
+  } catch (err) {
+    console.error("Error handling follow-up question button:", err);
+  }
+});
 
 // ============= Start the Bot =============
 let BOT_USER_ID;

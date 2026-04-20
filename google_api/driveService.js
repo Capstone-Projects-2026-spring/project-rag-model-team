@@ -39,16 +39,23 @@ export async function isConnected() {
   return isInitialized;
 }
 
+const SUPPORTED_MIME_TYPES = [
+  "application/vnd.google-apps.document",
+  "application/vnd.google-apps.spreadsheet",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/pdf",
+  "application/json",
+];
+
+const MIME_FILTER = SUPPORTED_MIME_TYPES.map((m) => `mimeType='${m}'`).join(" or ");
+
 export async function listFiles(pageSize = 50) {
   try {
     const drive = await getDriveClient();
 
-    let query = "mimeType='application/json' and trashed=false";
     const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID;
-
-    if (folderId) {
-      query += ` and '${folderId}' in parents`;
-    }
+    const folderClause = folderId ? ` and '${folderId}' in parents` : "";
+    const query = `(${MIME_FILTER}) and trashed=false${folderClause}`;
 
     const res = await drive.files.list({
       pageSize: pageSize,
@@ -83,19 +90,41 @@ export async function getFile(fileId) {
   }
 }
 
+export async function getFileContent(fileId, mimeType) {
+  const drive = await getDriveClient();
+
+  if (mimeType === "application/vnd.google-apps.document") {
+    const res = await drive.files.export(
+      { fileId, mimeType: "text/plain" },
+      { responseType: "stream" }
+    );
+    return { stream: res.data, format: "text" };
+  }
+  if (mimeType === "application/vnd.google-apps.spreadsheet") {
+    const res = await drive.files.export(
+      { fileId, mimeType: "text/csv" },
+      { responseType: "stream" }
+    );
+    return { stream: res.data, format: "text" };
+  }
+
+  const res = await drive.files.get(
+    { fileId, alt: "media" },
+    { responseType: "stream" }
+  );
+  return { stream: res.data, format: mimeType };
+}
+
 export async function searchFiles(query, pageSize = 20) {
   try {
     const drive = await getDriveClient();
 
-    let searchQuery = `name contains '${query}' and mimeType='application/json' and trashed=false`;
     const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID;
-
-    if (folderId) {
-      searchQuery += ` and '${folderId}' in parents`;
-    }
+    const folderClause = folderId ? ` and '${folderId}' in parents` : "";
+    const searchQuery = `name contains '${query}' and (${MIME_FILTER}) and trashed=false${folderClause}`;
 
     const res = await drive.files.list({
-      pageSize: pageSize,
+      pageSize,
       fields: "files(id, name, description, mimeType, webViewLink, modifiedTime)",
       q: searchQuery,
       orderBy: "modifiedTime desc"

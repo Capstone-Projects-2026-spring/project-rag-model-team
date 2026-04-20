@@ -4,6 +4,7 @@ import { jest } from "@jest/globals";
 const mockQueryGraphQL = jest.fn();
 const mockListFiles = jest.fn();
 const mockGetFile = jest.fn();
+const mockGetFileContent = jest.fn();
 const mockRecommendGitHubUsersForTopic = jest.fn();
 
 const mockGetDocumentTags = jest.fn();
@@ -92,6 +93,7 @@ await jest.unstable_mockModule("@langchain/core/output_parsers", () => ({
 await jest.unstable_mockModule("../../google_api/driveService.js", () => ({
   listFiles: mockListFiles,
   getFile: mockGetFile,
+  getFileContent: mockGetFileContent,
 }));
 
 await jest.unstable_mockModule("../graphql_setup/graphql_client.js", () => ({
@@ -122,6 +124,10 @@ beforeEach(() => {
   // Default: files not yet in DB, so enrichment triggers auto-classify
   mockGetDocumentTags.mockReturnValue(null);
   mockUpsertDocumentTags.mockReturnValue(undefined);
+  mockGetFileContent.mockResolvedValue({
+    stream: Readable.from([Buffer.from("file content")]),
+    format: "text",
+  });
   mockRecommendGitHubUsersForTopic.mockReturnValue({
     answer: null,
     suggestedUsers: [],
@@ -458,9 +464,10 @@ describe("answerQuestion access filtering", () => {
       },
     ]);
 
-    mockGetFile.mockResolvedValue(
-      Readable.from([Buffer.from("Visible architecture content")]),
-    );
+    mockGetFileContent.mockResolvedValue({
+      stream: Readable.from([Buffer.from("Visible architecture content")]),
+      format: "text",
+    });
 
     const response = await answerQuestion(
       "Show me the architecture docs",
@@ -519,7 +526,7 @@ describe("answerQuestion access filtering", () => {
 
     expect(response.answer).toContain("I can't share this information with you at the moment");
     expect(response.followUpQuestions).toEqual([]);
-    expect(mockGetFile).not.toHaveBeenCalled();
+    expect(mockGetFileContent).not.toHaveBeenCalled();
     expect(chainHandlers.driveSelection).not.toHaveBeenCalled();
   });
 });

@@ -2,7 +2,7 @@ import dotenv from "dotenv";
 import { ChatGroq } from "@langchain/groq";
 import { PromptTemplate } from "@langchain/core/prompts";
 import { StringOutputParser } from "@langchain/core/output_parsers";
-import { listFiles, getFile } from "../../google_api/driveService.js";
+import { listFiles, getFile, getFileContent } from "../../google_api/driveService.js";
 import { queryGraphQL } from "../graphql_setup/graphql_client.js";
 import {
   buildAccessDeniedMessage,
@@ -45,6 +45,25 @@ async function streamToString(stream) {
     chunks.push(chunk);
   }
   return Buffer.concat(chunks).toString("utf8");
+}
+
+// Converts a stream to text, routing binary formats through the right parser
+async function streamToText(stream, format) {
+  const chunks = [];
+  for await (const chunk of stream) chunks.push(chunk);
+  const buffer = Buffer.concat(chunks);
+
+  if (format === "application/pdf") {
+    const { default: pdfParse } = await import("pdf-parse");
+    const data = await pdfParse(buffer);
+    return data.text;
+  }
+  if (format === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") {
+    const mammoth = await import("mammoth");
+    const result = await mammoth.extractRawText({ buffer });
+    return result.value;
+  }
+  return buffer.toString("utf8");
 }
 
 // Helper function to extract JSON object from LLM response
@@ -574,8 +593,8 @@ async function searchDriveForTopic(
     const fileContents = await Promise.all(
       authorizedSuggestions.map(async (file) => {
         try {
-          const stream = await getFile(file.id);
-          const content = await streamToString(stream);
+          const { stream, format } = await getFileContent(file.id, file.mimeType);
+          const content = await streamToText(stream, format);
 
           // Auto-classify selected files that have no tags yet, caching for future queries
           if (!getDocumentTags(file.id)) {

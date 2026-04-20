@@ -34,12 +34,14 @@
     "cors": "^2.8.6",
     "dotenv": "^17.2.4",
     "express": "^5.2.1",
-    "graphql-http": "^1.22.4",
     "express-session": "^1.19.0",
     "googleapis": "^171.4.0",
     "graphql": "^16.13.2",
+    "graphql-http": "^1.22.4",
     "graphql-request": "^7.4.0",
     "langchain": "^1.2.35",
+    "mammoth": "^1.12.0",
+    "pdf-parse": "^2.4.5",
     "slack": "^11.0.2"
   },
   "devDependencies": {
