@@ -10,6 +10,9 @@ const mockRecommendGitHubUsersForTopic = jest.fn();
 const mockGetDocumentTags = jest.fn();
 const mockUpsertDocumentTags = jest.fn();
 
+const mockGetOne = jest.fn();
+const mockGetAll = jest.fn();
+
 const chainHandlers = {
   intent: jest.fn(),
   userInfo: jest.fn(),
@@ -30,7 +33,7 @@ function getChainHandler(template) {
     return chainHandlers.userInfo;
   }
 
-  if (template.includes("suggest ONLY documents that are directly relevant")) {
+  if (template.includes("Return ONLY the files whose name or tags directly match")) {
     return chainHandlers.driveSearch;
   }
 
@@ -100,6 +103,12 @@ await jest.unstable_mockModule("../graphql_setup/graphql_client.js", () => ({
   queryGraphQL: mockQueryGraphQL,
 }));
 
+await jest.unstable_mockModule("../database/sqlite.js", () => ({
+  getOne: mockGetOne,
+  getAll: mockGetAll,
+  initDatabase: jest.fn(),
+}));
+
 await jest.unstable_mockModule("../database/documentTagService.js", () => ({
   getDocumentTags: mockGetDocumentTags,
   upsertDocumentTags: mockUpsertDocumentTags,
@@ -121,6 +130,9 @@ beforeEach(() => {
   chainHandlers.confidenceCheck.mockResolvedValue('{"confidence":85,"reason":"Documents directly answer the question."}');
   chainHandlers.autoClassify.mockResolvedValue('{"classification_level":"internal","tags":[]}');
   chainHandlers.threadHistory.mockResolvedValue('{"threadAnswer":false}');
+  // Default: no profile in DB (requester is treated as public)
+  mockGetOne.mockReturnValue(null);
+  mockGetAll.mockReturnValue([]);
   // Default: files not yet in DB, so enrichment triggers auto-classify
   mockGetDocumentTags.mockReturnValue(null);
   mockUpsertDocumentTags.mockReturnValue(undefined);
@@ -144,10 +156,7 @@ describe("answerQuestion access filtering", () => {
   });
 
   it("returns a greeting response without sending greetings through the RAG prompt flow", async () => {
-    mockQueryGraphQL.mockResolvedValueOnce({
-      getUserProfile: null,
-    });
-
+    // getOne returns null by default → public context → still a greeting
     const response = await answerQuestion("hi", "U_REQUESTER");
 
     expect(response).toContain("Hello! I'm Keystone Bot.");
@@ -163,55 +172,19 @@ describe("answerQuestion access filtering", () => {
     chainHandlers.userInfo.mockResolvedValue("Talk to Alex.");
     chainHandlers.followUpQuestions.mockResolvedValue('[]');
 
-    mockQueryGraphQL
-      .mockResolvedValueOnce({
-        getUserProfile: {
-          session_id: "U_REQUESTER",
-          userInfo: {
-            role: "junior_dev",
-            classification_level: "internal",
-            active_github_repo:
-              "Capstone-Projects-2026-spring/project-rag-model-team",
-          },
-        },
-      })
-      .mockResolvedValueOnce({
-        getAllUserProfiles: [
-          {
-            id: "0",
-            session_id: "U_REQUESTER",
-            hasCompletedIntake: true,
-            userInfo: {
-              name: "Kidus",
-              role: "mid_dev",
-              classification_level: "internal",
-              department: "Design",
-            },
-          },
-          {
-            id: "1",
-            session_id: "U_INTERNAL",
-            hasCompletedIntake: true,
-            userInfo: {
-              name: "Alex Internal",
-              role: "mid_dev",
-              classification_level: "internal",
-              department: "Engineering",
-            },
-          },
-          {
-            id: "2",
-            session_id: "U_RESTRICTED",
-            hasCompletedIntake: true,
-            userInfo: {
-              name: "Morgan Manager",
-              role: "manager",
-              classification_level: "restricted",
-              department: "Leadership",
-            },
-          },
-        ],
-      });
+    // getRequesterAccessContext: profile lookup then user_info
+    mockGetOne
+      .mockReturnValueOnce({ id: 1 })
+      .mockReturnValueOnce({ role: "junior_dev", classification_level: "internal", active_github_repo: "Capstone-Projects-2026-spring/project-rag-model-team" })
+      // getAllUserProfiles: user_info for each of the 3 profiles
+      .mockReturnValueOnce({ name: "Kidus", role: "mid_dev", classification_level: "internal", department: "Design" })
+      .mockReturnValueOnce({ name: "Alex Internal", role: "mid_dev", classification_level: "internal", department: "Engineering" })
+      .mockReturnValueOnce({ name: "Morgan Manager", role: "manager", classification_level: "restricted", department: "Leadership" });
+    mockGetAll.mockReturnValueOnce([
+      { id: "0", session_id: "U_REQUESTER" },
+      { id: "1", session_id: "U_INTERNAL" },
+      { id: "2", session_id: "U_RESTRICTED" },
+    ]);
 
     const response = await answerQuestion(
       "Who can help with onboarding?",
@@ -268,46 +241,15 @@ describe("answerQuestion access filtering", () => {
       },
     });
 
-    mockQueryGraphQL
-      .mockResolvedValueOnce({
-        getUserProfile: {
-          session_id: "U_REQUESTER",
-          userInfo: {
-            role: "junior_dev",
-            classification_level: "internal",
-            active_github_repo:
-              "Capstone-Projects-2026-spring/project-rag-model-team",
-          },
-        },
-      })
-      .mockResolvedValueOnce({
-        getAllUserProfiles: [
-          {
-            id: "1",
-            session_id: "U_AUTH",
-            hasCompletedIntake: true,
-            userInfo: {
-              name: "Alex Auth",
-              github_username: "alexauth",
-              role: "senior_dev",
-              classification_level: "internal",
-              department: "Platform",
-            },
-          },
-          {
-            id: "2",
-            session_id: "U_RECENT",
-            hasCompletedIntake: true,
-            userInfo: {
-              name: "Riley Recent",
-              github_username: "rileyrecent",
-              role: "qa",
-              classification_level: "internal",
-              department: "Quality",
-            },
-          },
-        ],
-      });
+    mockGetOne
+      .mockReturnValueOnce({ id: 1 })
+      .mockReturnValueOnce({ role: "junior_dev", classification_level: "internal", active_github_repo: "Capstone-Projects-2026-spring/project-rag-model-team" })
+      .mockReturnValueOnce({ name: "Alex Auth", github_username: "alexauth", role: "senior_dev", classification_level: "internal", department: "Platform" })
+      .mockReturnValueOnce({ name: "Riley Recent", github_username: "rileyrecent", role: "qa", classification_level: "internal", department: "Quality" });
+    mockGetAll.mockReturnValueOnce([
+      { id: "1", session_id: "U_AUTH" },
+      { id: "2", session_id: "U_RECENT" },
+    ]);
 
     const response = await answerQuestion("Who can help with auth?", "U_REQUESTER");
 
@@ -354,19 +296,10 @@ describe("answerQuestion access filtering", () => {
       ],
     });
 
-    mockQueryGraphQL
-      .mockResolvedValueOnce({
-        getUserProfile: {
-          session_id: "U_REQUESTER",
-          userInfo: {
-            role: "junior_dev",
-            classification_level: "internal",
-          },
-        },
-      })
-      .mockResolvedValueOnce({
-        getAllUserProfiles: [],
-      });
+    mockGetOne
+      .mockReturnValueOnce({ id: 1 })
+      .mockReturnValueOnce({ role: "junior_dev", classification_level: "internal" });
+    mockGetAll.mockReturnValueOnce([]);
 
     const response = await answerQuestion("Who can help with CI?", "U_REQUESTER");
 
@@ -392,30 +325,13 @@ describe("answerQuestion access filtering", () => {
       suggestedUsers: [],
     });
 
-    mockQueryGraphQL
-      .mockResolvedValueOnce({
-        getUserProfile: {
-          session_id: "U_REQUESTER",
-          userInfo: {
-            role: "junior_dev",
-            classification_level: "internal",
-          },
-        },
-      })
-      .mockResolvedValueOnce({
-        getAllUserProfiles: [
-          {
-            id: "1",
-            session_id: "U_AUTH",
-            hasCompletedIntake: true,
-            userInfo: {
-              name: "Alex Auth",
-              role: "senior_dev",
-              classification_level: "internal",
-            },
-          },
-        ],
-      });
+    mockGetOne
+      .mockReturnValueOnce({ id: 1 })
+      .mockReturnValueOnce({ role: "junior_dev", classification_level: "internal" })
+      .mockReturnValueOnce({ name: "Alex Auth", role: "senior_dev", classification_level: "internal" });
+    mockGetAll.mockReturnValueOnce([
+      { id: "1", session_id: "U_AUTH" },
+    ]);
 
     const response = await answerQuestion(
       "Who should I talk to about database?",
@@ -441,15 +357,9 @@ describe("answerQuestion access filtering", () => {
     );
     chainHandlers.followUpQuestions.mockResolvedValue('[]');
 
-    mockQueryGraphQL.mockResolvedValueOnce({
-      getUserProfile: {
-        session_id: "U_REQUESTER",
-        userInfo: {
-          role: "junior_dev",
-          classification_level: "internal",
-        },
-      },
-    });
+    mockGetOne
+      .mockReturnValueOnce({ id: 1 })
+      .mockReturnValueOnce({ role: "junior_dev", classification_level: "internal" });
 
     mockListFiles.mockResolvedValue([
       {
@@ -499,15 +409,9 @@ describe("answerQuestion access filtering", () => {
     );
     chainHandlers.followUpQuestions.mockResolvedValue('[]');
 
-    mockQueryGraphQL.mockResolvedValueOnce({
-      getUserProfile: {
-        session_id: "U_REQUESTER",
-        userInfo: {
-          role: "junior_dev",
-          classification_level: "internal",
-        },
-      },
-    });
+    mockGetOne
+      .mockReturnValueOnce({ id: 1 })
+      .mockReturnValueOnce({ role: "junior_dev", classification_level: "internal" });
 
     mockListFiles.mockResolvedValue([
       {

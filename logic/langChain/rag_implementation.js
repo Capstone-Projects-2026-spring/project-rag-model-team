@@ -4,6 +4,7 @@ import { PromptTemplate } from "@langchain/core/prompts";
 import { StringOutputParser } from "@langchain/core/output_parsers";
 import { listFiles, getFile, getFileContent } from "../../google_api/driveService.js";
 import { queryGraphQL } from "../graphql_setup/graphql_client.js";
+import { getOne, getAll } from "../database/sqlite.js";
 import {
   buildAccessDeniedMessage,
   annotateFilesWithClassification,
@@ -147,17 +148,18 @@ const userInformationPrompt = PromptTemplate.fromTemplate(`
 
 //JSON ONLY
 const driveSearchPrompt = PromptTemplate.fromTemplate(`
-    Given the following search query, suggest ONLY documents that are directly relevant to the topic "{topic}".
-    Files in our drive: {files}
-    Each file includes: id, name, classification_level, and tags (topic labels).
+    Search query: "{topic}"
+    Files available: {files}
 
+    Return ONLY the files whose name or tags directly match the search query.
     Rules:
-    - Only include a file if its name or tags clearly match the topic.
-    - Do NOT suggest a file just because nothing else is available.
-    - If no file is a clear match, return an empty array.
+    - "Security-Policy", "Engineering-Handbook", "Architecture-Overview" do NOT match queries about specific projects, teams, or onboarding topics unless the query explicitly asks about security, architecture, or engineering standards.
+    - A file named "project-gamma" or "project king dedede" DOES match a query about projects or those specific projects.
+    - Do NOT include a file just because nothing else matches — return [] if nothing is relevant.
+    - Return each file at most once (no duplicates).
 
-    Return a JSON array with the format: [{{"id": "file.id", "name": "file.name"}}]
-    Do not add any text before or after the JSON. JSON only.
+    Return a JSON array: [{{"id": "file.id", "name": "file.name"}}]
+    JSON only, no explanation.
 `);
 
 //Natural Language
@@ -348,57 +350,31 @@ function buildGreetingResponse(requesterContext) {
   return "Hello! I'm Keystone Bot. Complete your profile setup in DM if you'd like access tailored to your role.";
 }
 
-async function getRequesterAccessContext(requesterSessionId) {
+function getRequesterAccessContext(requesterSessionId) {
   if (!requesterSessionId) {
-    return {
-      session_id: null,
-      role: null,
-      classification_level: "public",
-    };
+    return { session_id: null, role: null, classification_level: "public", active_github_repo: null };
   }
-
   try {
-    const data = await queryGraphQL(
-      `query GetRequesterProfile($session_id: String!) {
-        getUserProfile(session_id: $session_id) {
-          session_id
-          userInfo {
-            role
-            classification_level
-            active_github_repo
-          }
-        }
-      }`,
-      { session_id: requesterSessionId },
+    const profile = getOne(
+      `SELECT id FROM user_profiles WHERE session_id = ?`,
+      [requesterSessionId],
     );
-
-    const requesterProfile = data?.getUserProfile;
-    const requesterInfo = requesterProfile?.userInfo;
-
-    if (!requesterInfo) {
-      return {
-        session_id: requesterSessionId,
-        role: null,
-        classification_level: "public",
-      };
+    if (!profile) {
+      return { session_id: requesterSessionId, role: null, classification_level: "public", active_github_repo: null };
     }
-
+    const info = getOne(`SELECT role, classification_level, active_github_repo FROM user_info WHERE profile_id = ?`, [profile.id]);
+    if (!info) {
+      return { session_id: requesterSessionId, role: null, classification_level: "public", active_github_repo: null };
+    }
     return {
       session_id: requesterSessionId,
-      role: requesterInfo?.role || null,
-      classification_level:
-        requesterInfo?.classification_level ||
-        getClassificationForRole(requesterInfo?.role),
-      active_github_repo: requesterInfo?.active_github_repo || null,
+      role: info.role || null,
+      classification_level: info.classification_level || getClassificationForRole(info.role),
+      active_github_repo: info.active_github_repo || null,
     };
   } catch (error) {
     console.error("Error loading requester access context:", error);
-      return {
-        session_id: requesterSessionId,
-        role: null,
-        classification_level: "public",
-        active_github_repo: null,
-      };
+    return { session_id: requesterSessionId, role: null, classification_level: "public", active_github_repo: null };
   }
 }
 
@@ -581,9 +557,14 @@ async function searchDriveForTopic(
   const enrichedFilesById = new Map(
     enrichedFiles.map((file) => [file.id, file]),
   );
+  const seenIds = new Set();
   const authorizedSuggestions = fileSuggestions
     .map((file) => enrichedFilesById.get(file.id))
-    .filter(Boolean);
+    .filter((file) => {
+      if (!file || seenIds.has(file.id)) return false;
+      seenIds.add(file.id);
+      return true;
+    });
 
   if (authorizedSuggestions.length === 0) {
     return buildAccessDeniedMessage(topic);
@@ -664,36 +645,17 @@ async function searchDriveForTopic(
 
 async function answerDriveSearchQuestion(fileContents, topic) {
   try {
-    // First, check confidence that documents answer the question
-    const confidenceCheckResult = await confidenceCheckChain.invoke({
-      question: topic,
-      documents: fileContents.slice(0, 2000) // Limit to avoid token overload
-    });
-    
-    let confidence = 0;
-    try {
-      const parsed = JSON.parse(stripCodeFences(confidenceCheckResult));
-      confidence = parsed.confidence || 0;
-      console.log(`Confidence check: ${confidence}% - ${parsed.reason}`);
-    } catch (e) {
-      console.warn("Could not parse confidence check, defaulting to low confidence");
-      confidence = 20;
-    }
-    
-    // If confidence is low (below 40%), offer web search
-    if (confidence < 40) {
-      console.log(`Low confidence (${confidence}%): offering web search`);
-      return NO_INTERNAL_RESULTS;
-    }
-    
     const finalAnswer = await driveSearchSelectionChain.invoke({ content: fileContents, topic });
     const trimmedAnswer = finalAnswer.trim();
-    
-    // Additional check: if LLM says it doesn't know
-    if (trimmedAnswer === "IDK" || trimmedAnswer.toLowerCase().includes("don't know") || trimmedAnswer.toLowerCase().includes("cannot find")) {
+
+    if (
+      trimmedAnswer === "IDK" ||
+      trimmedAnswer.toLowerCase().includes("don't have enough information") ||
+      trimmedAnswer.toLowerCase().includes("cannot find")
+    ) {
       return NO_INTERNAL_RESULTS;
     }
-    
+
     return finalAnswer;
   } catch (error) {
     console.error("Error invoking driveSearchSelectionChain:", error);
@@ -760,8 +722,7 @@ export async function answerQuestion(
   threadHistory = [],
 ) {
   try {
-    const requesterContext =
-      await getRequesterAccessContext(requesterSessionId);
+    const requesterContext = getRequesterAccessContext(requesterSessionId);
 
     if (isGreetingMessage(message)) {
       return buildGreetingResponse(requesterContext);
@@ -821,23 +782,12 @@ export async function answerQuestion(
 
     //This takes care of all user information retrieval
     if (intent.type === "GET_USER" || intent.action === "GET_USER") {
-      const data = await queryGraphQL(`{
-  getAllUserProfiles {
-    id
-    session_id
-    userInfo {
-      name
-      email
-      github_username
-      role
-      classification_level
-      experience_level
-      department
-    }
-    hasCompletedIntake
-  }
-}`);
-      const allProfiles = data?.getAllUserProfiles || [];
+      const profileRows = getAll(`SELECT id, session_id FROM user_profiles`);
+      const allProfiles = profileRows.map((p) => {
+        const info = getOne(`SELECT name, email, github_username, role, classification_level, experience_level, department FROM user_info WHERE profile_id = ?`, [p.id]);
+        return { id: p.id, session_id: p.session_id, userInfo: info || null, hasCompletedIntake: !!info };
+      });
+
       const accessibleProfiles = filterAccessibleProfiles(
         allProfiles.filter(
           (profile) =>
