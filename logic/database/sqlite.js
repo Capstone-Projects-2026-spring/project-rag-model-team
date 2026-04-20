@@ -177,6 +177,31 @@ function runMigrations() {
         console.log(`Migration completed: ${columnName} column added`);
       }
     }
+
+    const responseFeedbackExists = tables.some((t) => t.name === 'response_feedback');
+    if (!responseFeedbackExists) {
+      console.log('Creating response_feedback table...');
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS response_feedback (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_session_id TEXT NOT NULL,
+          message_ts TEXT NOT NULL,
+          channel_id TEXT NOT NULL,
+          feedback_type TEXT NOT NULL,
+          user_question TEXT,
+          bot_response_summary TEXT,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (user_session_id) REFERENCES user_profiles(session_id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_feedback_user ON response_feedback(user_session_id);
+        CREATE INDEX IF NOT EXISTS idx_feedback_message ON response_feedback(message_ts);
+        CREATE INDEX IF NOT EXISTS idx_feedback_channel ON response_feedback(channel_id);
+        CREATE INDEX IF NOT EXISTS idx_feedback_type ON response_feedback(feedback_type);
+        CREATE INDEX IF NOT EXISTS idx_feedback_timestamp ON response_feedback(created_at);
+      `);
+      console.log('Migration completed: response_feedback table created');
+    }
   } catch (error) {
     console.error('Migration failed:', error.message);
   }
