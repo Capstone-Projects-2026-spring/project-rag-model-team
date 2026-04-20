@@ -2,7 +2,9 @@ import dotenv from "dotenv";
 import { ChatGroq } from "@langchain/groq";
 import { PromptTemplate } from "@langchain/core/prompts";
 import { StringOutputParser } from "@langchain/core/output_parsers";
-import { listFiles, getFile } from "../../google_api/driveService.js";
+import OnedriveServiceUser from "../../microsoft_api/onedriveServiceUser.js";
+import { getTokens } from "../../microsoft_api/tokenManager.js";
+import { generateAuthUrl } from "../../microsoft_api/onedriveAuth.js";
 import { queryGraphQL } from "../graphql_setup/graphql_client.js";
 import {
   buildAccessDeniedMessage,
@@ -340,14 +342,18 @@ async function getRequesterAccessContext(requesterSessionId) {
  * Accepts an optional `_content` string to avoid re-fetching the file.
  * Falls back to 'internal' classification with no tags on failure.
  */
-export async function autoClassifyDocument(file) {
+export async function autoClassifyDocument(file, onedrive) {
   try {
     let excerpt;
     if (file._content) {
       excerpt = file._content.slice(0, 500);
     } else {
-      const stream = await getFile(file.id);
-      const fullContent = await streamToString(stream);
+      if (!onedrive) {
+        console.warn(`Auto-classify skipped for "${file.name}": no onedrive instance provided`);
+        return { classification_level: "internal", tags: [] };
+      }
+      const fileBuffer = await onedrive.getFile(file.id);
+      const fullContent = fileBuffer.toString('utf-8');
       excerpt = fullContent.slice(0, 500);
     }
     const result = await autoClassifyChain.invoke({
@@ -404,100 +410,118 @@ async function searchDriveForTopic(
   requesterContext,
   preemptive = false,
 ) {
-  const files = await listFiles();
-  // Annotate with Drive metadata first, then override with DB values (DB takes priority)
-  const annotated = annotateFilesWithClassification(files);
-  const enriched = enrichFilesWithTags(annotated);
-  // Filter using the final classification (DB-overridden values)
-  const enrichedFiles = enriched.filter((file) =>
-    canAccessClassification(
-      requesterContext.classification_level,
-      file.classification_level,
-    ),
-  );
-
-  if (enrichedFiles.length === 0) {
-    return buildAccessDeniedMessage(topic);
+  // Get access token for the requester
+  const tokenData = getTokens(requesterContext.session_id);
+  if (!tokenData || !tokenData.access_token) {
+    console.error("No access token found for user:", requesterContext.session_id);
+    const authUrl = generateAuthUrl(requesterContext.session_id);
+    return `I need permission to access your documents. Please authenticate here: ${authUrl}`;
   }
 
-  const fileSuggestionsString = await driveSearchChain.invoke({
-    files: JSON.stringify(
-      enrichedFiles.map((f) => ({
-        id: f.id,
-        name: f.name,
-        classification_level: f.classification_level,
-        tags: f.tags,
-      })),
-    ),
-    topic,
-  });
-
-  let fileSuggestions;
-  try {
-    fileSuggestions = extractJSON(fileSuggestionsString);
-  } catch (error) {
-    console.error("Error parsing file suggestions JSON:", error);
-    return "Sorry, I couldn't find relevant information in our documents.";
-  }
-
-  if (!Array.isArray(fileSuggestions) || fileSuggestions.length === 0) {
-    return "Sorry, I couldn't find relevant information in our documents.";
-  }
-
-  const enrichedFilesById = new Map(
-    enrichedFiles.map((file) => [file.id, file]),
-  );
-  const authorizedSuggestions = fileSuggestions
-    .map((file) => enrichedFilesById.get(file.id))
-    .filter(Boolean);
-
-  if (authorizedSuggestions.length === 0) {
-    return buildAccessDeniedMessage(topic);
-  }
+  const onedrive = new OnedriveServiceUser(tokenData.access_token);
 
   try {
-    const fileContents = await Promise.all(
-      authorizedSuggestions.map(async (file) => {
-        try {
-          const stream = await getFile(file.id);
-          const content = await streamToString(stream);
-
-          // Auto-classify selected files that have no tags yet, caching for future queries
-          if (!getDocumentTags(file.id)) {
-            console.log(`Auto-classifying "${file.name}"...`);
-            const { classification_level, tags } = await autoClassifyDocument({
-              ...file,
-              _content: content,
-            });
-            upsertDocumentTags(
-              file.id,
-              file.name,
-              classification_level,
-              tags,
-              true,
-            );
-          }
-
-          return `File: ${file.name}\nClassification: ${file.classification_level}\nTags: ${file.tags.join(", ")}\n\n${content}`;
-        } catch (error) {
-          console.error(`Error reading file ${file.id}:`, error);
-          return `Error reading file: ${error.message}`;
-        }
-      }),
+    const files = await onedrive.listFiles();
+    // Annotate with Drive metadata first, then override with DB values (DB takes priority)
+    const annotated = annotateFilesWithClassification(files);
+    const enriched = enrichFilesWithTags(annotated);
+    // Filter using the final classification (DB-overridden values)
+    const enrichedFiles = enriched.filter((file) =>
+      canAccessClassification(
+        requesterContext.classification_level,
+        file.classification_level,
+      ),
     );
-    console.log("Retrieved file contents:", fileContents);
-    if (!preemptive) {
-      return await answerDriveSearchQuestion(fileContents, topic);
-    } else {
-      console.log("Invoking preemptive prompting chain with file contents");
-      return await preemptivePromptingChain.invoke({
-        topic: topic,
-        data: fileContents,
-      });
+
+    if (enrichedFiles.length === 0) {
+      return buildAccessDeniedMessage(topic);
+    }
+
+    const fileSuggestionsString = await driveSearchChain.invoke({
+      files: JSON.stringify(
+        enrichedFiles.map((f) => ({
+          id: f.id,
+          name: f.name,
+          classification_level: f.classification_level,
+          tags: f.tags,
+        })),
+      ),
+      topic,
+    });
+
+    let fileSuggestions;
+    try {
+      fileSuggestions = extractJSON(fileSuggestionsString);
+    } catch (error) {
+      console.error("Error parsing file suggestions JSON:", error);
+      return "Sorry, I couldn't find relevant information in our documents.";
+    }
+
+    if (!Array.isArray(fileSuggestions) || fileSuggestions.length === 0) {
+      return "Sorry, I couldn't find relevant information in our documents.";
+    }
+
+    const enrichedFilesById = new Map(
+      enrichedFiles.map((file) => [file.id, file]),
+    );
+    const authorizedSuggestions = fileSuggestions
+      .map((file) => enrichedFilesById.get(file.id))
+      .filter(Boolean);
+
+    if (authorizedSuggestions.length === 0) {
+      return buildAccessDeniedMessage(topic);
+    }
+
+    try {
+      const fileContents = await Promise.all(
+        authorizedSuggestions.map(async (file) => {
+          try {
+            const fileBuffer = await onedrive.getFile(file.id);
+            const content = fileBuffer.toString('utf-8');
+
+            // Auto-classify selected files that have no tags yet, caching for future queries
+            if (!getDocumentTags(file.id)) {
+              console.log(`Auto-classifying "${file.name}"...`);
+              const { classification_level, tags } = await autoClassifyDocument(
+                {
+                  ...file,
+                  _content: content,
+                },
+                onedrive,
+              );
+              upsertDocumentTags(
+                file.id,
+                file.name,
+                classification_level,
+                tags,
+                true,
+              );
+            }
+
+            return `File: ${file.name}\nClassification: ${file.classification_level}\nTags: ${file.tags.join(", ")}\n\n${content}`;
+          } catch (error) {
+            console.error(`Error reading file ${file.id}:`, error);
+            return `Error reading file: ${error.message}`;
+          }
+        }),
+      );
+      console.log("Retrieved file contents:", fileContents);
+      if (!preemptive) {
+        return await answerDriveSearchQuestion(fileContents, topic);
+      } else {
+        console.log("Invoking preemptive prompting chain with file contents");
+        return await preemptivePromptingChain.invoke({
+          topic: topic,
+          data: fileContents,
+        });
+      }
+    } catch (error) {
+      console.error("Error retrieving file contents:", error);
+      return "Sorry, I couldn't retrieve the documents from our drive.";
     }
   } catch (error) {
-    console.error("Error retrieving file contents:", error);
-    return "Sorry, I couldn't retrieve the documents from our drive.";
+    console.error("Error listing files from OneDrive:", error);
+    return "Sorry, I couldn't access your documents. Please try again later.";
   }
 }
 

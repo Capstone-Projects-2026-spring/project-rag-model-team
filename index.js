@@ -1,14 +1,15 @@
 import { App } from "@slack/bolt";
 import dotenv from "dotenv";
 import { queryGraphQL } from "./logic/graphql_setup/graphql_client.js";
-import slackHandlers from "./google_api/slack.js";
+import slackHandlers from "./microsoft_api/slack.js";
 import {
   answerQuestion,
   autoClassifyDocument,
 } from "./logic/langChain/rag_implementation.js";
 import { startGraphQL } from "./logic/graphql_setup/graphql_implementation.js";
 import { initDatabase } from "./logic/database/sqlite.js";
-import { listFiles } from "./google_api/driveService.js";
+import * as tokenManager from "./microsoft_api/tokenManager.js";
+import OnedriveServiceUser from "./microsoft_api/onedriveServiceUser.js";
 import { annotateFilesWithClassification } from "./logic/security/access_control.js";
 import {
   upsertDocumentTags,
@@ -987,12 +988,21 @@ app.command("/update-profile", async ({ ack, body, client }) => {
   }
 });
 
-app.command("/sync-docs", async ({ ack, respond }) => {
+app.command("/sync-docs", async ({ ack, respond, user_id }) => {
   await ack();
   await respond({ text: "Starting document sync... this may take a moment." });
 
   try {
-    const files = await listFiles();
+    const accessToken = await tokenManager.getValidAccessToken(user_id);
+    
+    if (!accessToken) {
+      await respond("❌ OneDrive not authenticated. Please authenticate first.");
+      return;
+    }
+
+    const onedrive = new OnedriveServiceUser(accessToken);
+    const files = await onedrive.listFiles(200);
+    
     const annotated = annotateFilesWithClassification(files);
     let synced = 0;
     let skipped = 0;

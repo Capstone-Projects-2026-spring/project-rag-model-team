@@ -7,32 +7,37 @@ const __dirname = path.dirname(__filename);
 
 const DOCS_DIR = path.join(__dirname, 'sample-docs');
 
-// Import Google Drive service
-let driveService;
+// Import OneDrive service
+let onedriveServiceUser;
+let tokenManager;
 try {
-  driveService = await import('./google_api/driveService.js');
+  onedriveServiceUser = await import('./microsoft_api/onedriveServiceUser.js');
+  tokenManager = await import('./microsoft_api/tokenManager.js');
 } catch (err) {
-  console.log('Google Drive service not available');
-  driveService = null;
+  console.log('OneDrive service not available');
+  onedriveServiceUser = null;
+  tokenManager = null;
 }
 
-export async function retrieveDocumentFromDrive(query, slackUserId) {
-  if (!driveService) return null;
+export async function retrieveDocumentFromOneDrive(query, slackUserId) {
+  if (!onedriveServiceUser || !tokenManager) return null;
   
   try {
-    const files = await driveService.searchFiles(slackUserId, query);
+    const accessToken = await tokenManager.getValidAccessToken(slackUserId);
+    const onedrive = new onedriveServiceUser.default(accessToken);
+    const files = await onedrive.searchFiles(query);
+    
     if (files.length > 0) {
       const file = files[0];
-      // Would need to download and parse the file
       return {
         id: file.id,
         name: file.name,
-        source: 'google_drive',
-        link: file.webViewLink
+        source: 'onedrive',
+        link: file.webUrl
       };
     }
   } catch (error) {
-    console.error('Error retrieving from Google Drive:', error);
+    console.error('Error retrieving from OneDrive:', error);
   }
   return null;
 }

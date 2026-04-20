@@ -1,51 +1,73 @@
-import { google } from 'googleapis';
+import fetch from 'node-fetch';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const KEYFILE_PATH = path.join(__dirname, 'service-account-key.json');
+// OneDrive Graph API configuration
+const GRAPH_API_BASE = 'https://graph.microsoft.com/v1.0';
 
-const auth = new google.auth.GoogleAuth({
-  keyFile: KEYFILE_PATH,
-  scopes: ['https://www.googleapis.com/auth/drive.readonly'],
-});
+async function listJsonFilesFromOneDrive(accessToken) {
+  try {
+    const response = await fetch(
+      `${GRAPH_API_BASE}/me/drive/root/children?$filter=file ne null&$top=200`,
+      {
+        headers: { 'Authorization': `Bearer ${accessToken}` }
+      }
+    );
 
-const drive = google.drive({ version: 'v3', auth });
-
-async function listJsonFiles() {
-  const res = await drive.files.list({
-    q: "mimeType='application/json'",
-    fields: 'files(id, name)',
-    pageSize: 200,
-  });
-  return res.data.files || [];
-}
-
-async function downloadJsonFile(fileId) {
-  const res = await drive.files.get(
-    { fileId, alt: 'media' },
-    { responseType: 'stream' }
-  );
-
-  let body = '';
-  for await (const chunk of res.data) {
-    body += chunk;
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    return (data.value || []).filter(f => f.name && f.name.endsWith('.json'));
+  } catch (error) {
+    console.error('Error listing files:', error);
+    throw error;
   }
-  return JSON.parse(body);
 }
 
-export async function retrieveFromDrive(query) {
-  const files = await listJsonFiles();
-  for (const f of files) {
-    const doc = await downloadJsonFile(f.id);
-    if (
-      doc.name?.toLowerCase().includes(query.toLowerCase()) ||
-      doc.id?.toLowerCase().includes(query.toLowerCase())
-    ) {
-      return doc;
+async function downloadJsonFileFromOneDrive(fileId, accessToken) {
+  try {
+    const response = await fetch(
+      `${GRAPH_API_BASE}/me/drive/items/${fileId}/content`,
+      {
+        headers: { 'Authorization': `Bearer ${accessToken}` }
+      }
+    );
+
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const body = await response.text();
+    return JSON.parse(body);
+  } catch (error) {
+    console.error('Error downloading file:', error);
+    throw error;
+  }
+}
+
+export async function retrieveFromOneDrive(query, accessToken) {
+  try {
+    const files = await listJsonFilesFromOneDrive(accessToken);
+    
+    for (const f of files) {
+      try {
+        const doc = await downloadJsonFileFromOneDrive(f.id, accessToken);
+        if (
+          doc.name?.toLowerCase().includes(query.toLowerCase()) ||
+          doc.id?.toLowerCase().includes(query.toLowerCase())
+        ) {
+          return {
+            ...doc,
+            fileId: f.id,
+            source: 'onedrive'
+          };
+        }
+      } catch (error) {
+        console.warn(`Could not parse file ${f.name}:`, error.message);
+      }
     }
+    return null;
+  } catch (error) {
+    console.error('Error retrieving from OneDrive:', error);
+    throw error;
   }
-  return null;
 }

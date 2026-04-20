@@ -84,9 +84,24 @@ await jest.unstable_mockModule("@langchain/core/output_parsers", () => ({
   StringOutputParser: class StringOutputParser {},
 }));
 
-await jest.unstable_mockModule("../../google_api/driveService.js", () => ({
-  listFiles: mockListFiles,
-  getFile: mockGetFile,
+await jest.unstable_mockModule("../../microsoft_api/onedriveServiceUser.js", () => {
+  const mockOnedriveServiceUser = class OnedriveServiceUser {
+    constructor(accessToken) {
+      this.accessToken = accessToken;
+    }
+    listFiles = mockListFiles;
+    getFile = mockGetFile;
+  };
+  return {
+    default: mockOnedriveServiceUser,
+  };
+});
+
+await jest.unstable_mockModule("../../microsoft_api/tokenManager.js", () => ({
+  getTokens: jest.fn(() => ({
+    access_token: "mock-token-123",
+    expires_in: 3600,
+  })),
 }));
 
 await jest.unstable_mockModule("../graphql_setup/graphql_client.js", () => ({
@@ -445,7 +460,7 @@ describe("answerQuestion access filtering", () => {
     ]);
 
     mockGetFile.mockResolvedValue(
-      Readable.from([Buffer.from("Visible architecture content")]),
+      Buffer.from("Visible architecture content"),
     );
 
     const response = await answerQuestion(
