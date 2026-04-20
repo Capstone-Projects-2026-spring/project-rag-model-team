@@ -58,6 +58,80 @@ function logInteraction(userId, message, type) {
   }).catch((err) => console.warn("Interaction logging failed:", err.message));
 }
 
+/**
+ * Check if a question is explicitly asking for web search
+ * Examples: "search online for", "google", "web search", "find online"
+ */
+function isExplicitWebSearchRequest(question) {
+  const webSearchPatterns = [
+    /search\s+online/i,
+    /google\s+(for|me)?/i,
+    /web\s+search/i,
+    /find\s+online/i,
+    /search\s+the\s+web/i,
+    /look\s+up\s+online/i,
+  ];
+  
+  return webSearchPatterns.some(pattern => pattern.test(question));
+}
+
+function isYesNoReply(text) {
+  const normalized = String(text || "")
+    .replace(/<@[^>]+>/g, "")
+    .trim()
+    .toLowerCase();
+  return normalized === "yes" || normalized === "no";
+}
+
+function normalizeYesNoReply(text) {
+  return String(text || "")
+    .replace(/<@[^>]+>/g, "")
+    .trim()
+    .toLowerCase();
+}
+
+// Tracks recent web-search offers so yes/no replies can be handled without
+// requiring channel history scopes in private channels.
+const pendingWebSearchOffers = new Map();
+const PENDING_WEB_OFFER_TTL_MS = 10 * 60 * 1000;
+
+function setPendingWebSearchOffer(threadTs, userQuestion, userId) {
+  if (!threadTs || !userQuestion) {
+    return;
+  }
+
+  pendingWebSearchOffers.set(threadTs, {
+    userQuestion,
+    userId,
+    createdAt: Date.now(),
+  });
+}
+
+function getPendingWebSearchOffer(threadTs) {
+  if (!threadTs) {
+    return null;
+  }
+
+  const pending = pendingWebSearchOffers.get(threadTs);
+  if (!pending) {
+    return null;
+  }
+
+  if (Date.now() - pending.createdAt > PENDING_WEB_OFFER_TTL_MS) {
+    pendingWebSearchOffers.delete(threadTs);
+    return null;
+  }
+
+  return pending;
+}
+
+function clearPendingWebSearchOffer(threadTs) {
+  if (threadTs) {
+    pendingWebSearchOffers.delete(threadTs);
+  }
+}
+
+
 async function fetchUserProfile(sessionId) {
   const query = `
     query ($session_id: String!) {
@@ -549,47 +623,25 @@ app.event("app_mention", async ({ event, say, client }) => {
     return;
   }
 
-  const question = event.text.replace(/<@[^>]+>/, "").trim();
+  const question = event.text.replace(/<@[^>]+>/g, "").trim();
+  const replyThreadTs = event.thread_ts || event.ts;
   console.log("User asked a question:", question);
   logInteraction(event.user, question, "reactive");
-  console.log("Thread history for context:", threadHistory);
-  const response = await answerQuestion(
-    question,
-    event.user,
-    false,
-    threadHistory,
-  );
-  const requesterProfile = await fetchUserProfile(event.user);
-  const shouldShowGitHubReminder =
-    !isInThread &&
-    !normalizeGitHubUsername(requesterProfile?.userInfo?.github_username);
+  const response = await answerQuestion(question, event.user);
 
-  const threadTs = getThreadTs(event);
-  if (
-    Array.isArray(response.suggestedUsers) &&
-    response.suggestedUsers.length > 0
-  ) {
-    let blocks = await buildSuggestionBlocksForResponse(
-      client,
-      event.channel,
-      event.user,
-      question,
-      response,
-    );
-    if (shouldShowGitHubReminder) {
-      blocks = [...getGitHubLinkReminderBlocks(), ...blocks];
-    }
-    await say({
-      blocks,
-      text: response.answer || "I apologize, I was not able to answer this",
-      thread_ts: threadTs,
-    });
+  if (typeof response === 'string') {
+    await say({ text: response });
   } else {
-    const messageText = buildTextResponseMessage(
-      response,
-      shouldShowGitHubReminder,
-    );
-    await say({ text: messageText, thread_ts: threadTs });
+    let messageText = response.answer;
+
+    if (response.followUpQuestions && response.followUpQuestions.length > 0) {
+      messageText += "\n\n💡 *You might also want to ask:*\n";
+      response.followUpQuestions.forEach((question, index) => {
+        messageText += `${index + 1}. ${question}\n`;
+      });
+    }
+
+    await say({ text: messageText });
   }
 });
 
@@ -599,25 +651,23 @@ app.event("message", async ({ event, say, client }) => {
   if (event.bot_id) {
     return;
   }
-  const userId = event.user;
-  if (event.subtype === "message_changed") return;
-  if (event.channel_type !== "im" && event.text?.includes(`<@${BOT_USER_ID}>`))
+  
+  // Skip if this is a reply in a thread (handled by thread listener above)
+  // thread_ts is the timestamp of the parent message in a thread
+  if (event.thread_ts) {
     return;
-  if (event.channel_type !== "im") {
-    console.log("Event Informaiton", event);
-    const preemptiveResponse = await answerQuestion(
-      event.text,
-      event.user,
-      true,
-    );
+  }
+  
+  const userId = event.user;
+  if (event.channel_type !== "im" && event.action !== "app_mention") {
+    const preemptiveResponse = await answerQuestion(event.text, event.user, true);
     console.log("Preemptive response:", preemptiveResponse);
     if (preemptiveResponse) {
       logInteraction(userId, event.text, "preemptive");
-      await client.chat.postEphemeral({
-        channel: event.channel,
-        user: userId,
-        text: preemptiveResponse.answer || preemptiveResponse,
-      });
+      await client.chat.postEphemeral({ 
+      channel: event.channel,
+      user: userId,
+      text: preemptiveResponse.answer });
     }
     return;
   }
@@ -638,8 +688,7 @@ app.event("message", async ({ event, say, client }) => {
 
     // Profile exists — answer the question directly (no @ needed in DMs)
     logInteraction(userId, event.text, "reactive");
-    const response = await answerQuestion(event.text, userId, false);
-    const threadTs = getThreadTs(event);
+    const response = await answerQuestion(event.text, userId);
 
     if (
       Array.isArray(response.suggestedUsers) &&
@@ -663,6 +712,148 @@ app.event("message", async ({ event, say, client }) => {
     console.error("Error handling DM:", error);
     await say("Sorry, I encountered an error. Please try again.");
     return;
+  }
+});
+
+// ============= Thread Listener for Web Search =============
+
+app.event("message", async ({ event, say, client }) => {
+  // Only handle replies in threads (thread_ts indicates a reply)
+  if (!event.thread_ts || event.bot_id) {
+    return;
+  }
+
+  const messageText = normalizeYesNoReply(event.text);
+  
+  // Check if user replied to the web search offer
+  if (messageText !== "yes" && messageText !== "no") {
+    return;
+  }
+
+  try {
+    const pending = getPendingWebSearchOffer(event.thread_ts);
+    if (pending) {
+      if (messageText === "yes") {
+        console.log("User accepted web search offer for:", pending.userQuestion);
+        logInteraction(event.user, `web_search: ${pending.userQuestion}`, "web_search");
+
+        const webResult = await searchWebForTopic(pending.userQuestion);
+        await say({
+          text: webResult.answer,
+          thread_ts: event.thread_ts,
+        });
+      } else {
+        console.log("User declined web search for:", pending.userQuestion);
+        logInteraction(event.user, `declined_web_search: ${pending.userQuestion}`, "web_search");
+
+        await say({
+          text: "Sorry, I couldn't find relevant information in our internal documents. Feel free to try rephrasing your question or ask about something else.",
+          thread_ts: event.thread_ts,
+        });
+      }
+      clearPendingWebSearchOffer(event.thread_ts);
+      return;
+    }
+
+    // Fetch the last few messages in this thread to find the question and verify offer was just made
+    const threadMessages = await client.conversations.replies({
+      channel: event.channel,
+      ts: event.thread_ts,
+      limit: 20,  // Get more context to find the bot's last message
+    });
+
+    if (!threadMessages.messages || threadMessages.messages.length === 0) {
+      return;
+    }
+
+    // Find the most recent bot message (the web search offer)
+    let botOfferMessage = null;
+    let questionMessage = null;
+    
+    for (let i = threadMessages.messages.length - 1; i >= 0; i--) {
+      const msg = threadMessages.messages[i];
+      // Skip the current message and any messages after the bot's offer
+      if (msg.ts >= event.ts) continue;
+      
+      if (msg.bot_id || msg.username === 'Project_Keystone_Bot') {
+        // Check if this is the web search offer message
+        if (msg.text && msg.text.includes('search online')) {
+          botOfferMessage = msg;
+          // Look for the user's question message before this offer
+          for (let j = i - 1; j >= 0; j--) {
+            const prevMsg = threadMessages.messages[j];
+            if (!prevMsg.bot_id && prevMsg.user) {
+              questionMessage = prevMsg;
+              break;
+            }
+          }
+          break;
+        }
+      }
+    }
+
+    if (!botOfferMessage || !questionMessage) {
+      if (messageText === "no") {
+        await say({
+          text: "Sorry, I couldn't find relevant information in our internal documents. Feel free to try rephrasing your question or ask about something else.",
+          thread_ts: event.thread_ts,
+        });
+      }
+      // No recent web search offer found, ignore this response
+      return;
+    }
+
+    // Clean the question by removing any bot mentions
+    const originalQuestion = questionMessage.text.replace(/<@[^>]+>/g, "").trim();
+
+    if (messageText === "yes") {
+      // User accepted - perform web search
+      console.log("User accepted web search offer for:", originalQuestion);
+      logInteraction(event.user, `web_search: ${originalQuestion}`, "web_search");
+
+      // Perform web search
+      const webResult = await searchWebForTopic(originalQuestion);
+
+      // Answer already includes sources, just send it directly
+      await say({
+        text: webResult.answer,
+        thread_ts: event.thread_ts,
+      });
+    } else if (messageText === "no") {
+      // User declined - provide the low confidence internal answer
+      console.log("User declined web search for:", originalQuestion);
+      logInteraction(event.user, `declined_web_search: ${originalQuestion}`, "web_search");
+
+      // Just show the "couldn't find" message with follow-up questions
+      const noResultMessage = "Sorry, I couldn't find relevant information in our internal documents. Feel free to try rephrasing your question or ask about something else.";
+      
+      await say({
+        text: noResultMessage,
+        thread_ts: event.thread_ts,
+      });
+    }
+  } catch (error) {
+    console.error("Error handling web search request:", error);
+
+    if (error?.data?.error === "missing_scope") {
+      if (messageText === "no") {
+        await say({
+          text: "Sorry, I couldn't find relevant information in our internal documents. Feel free to try rephrasing your question or ask about something else.",
+          thread_ts: event.thread_ts,
+        });
+      } else {
+        await say({
+          text: "I couldn't access thread history to confirm context. Please ask your question again or grant the bot the required history scope.",
+          thread_ts: event.thread_ts,
+        });
+      }
+      return;
+    }
+
+    await say({
+      text: "Sorry, I couldn't search online at this time. Please try again.",
+      thread_ts: event.thread_ts,
+    });
   }
 });
 
