@@ -24,6 +24,11 @@ import {
   normalizeGitHubUsername,
   syncGitHubRepository,
 } from "./logic/github/githubService.js";
+import {
+  storeFeedback,
+  getExistingFeedback,
+  updateFeedback,
+} from "./logic/database/feedbackService.js";
 
 dotenv.config();
 
@@ -520,6 +525,35 @@ function buildWebSearchOfferBlocks(messageText, question) {
   ];
 }
 
+function buildFeedbackButtons(messageTs) {
+  return {
+    type: "actions",
+    elements: [
+      {
+        type: "button",
+        text: { type: "plain_text", text: "👍 Helpful", emoji: true },
+        action_id: "feedback_helpful",
+        value: messageTs,
+        style: "primary",
+      },
+      {
+        type: "button",
+        text: { type: "plain_text", text: "👎 Not helpful", emoji: true },
+        action_id: "feedback_not_helpful",
+        value: messageTs,
+        style: "danger",
+      },
+    ],
+  };
+}
+
+function appendFeedbackButtons(blocks, messageTs) {
+  if (!Array.isArray(blocks) || !messageTs) {
+    return blocks;
+  }
+  return [...blocks, { type: "divider" }, buildFeedbackButtons(messageTs)];
+}
+
 function buildTextResponseMessage(response, shouldShowGitHubReminder = false) {
   if (!response || typeof response === "string") {
     return response || "I apologize, I was not able to answer this.";
@@ -694,7 +728,8 @@ app.event("app_mention", async ({ event, say, client }) => {
         blocks: buildWebSearchOfferBlocks(messageText, question),
       });
     } else if (Array.isArray(response.suggestedUsers) && response.suggestedUsers.length > 0) {
-      const blocks = await buildSuggestionBlocksForResponse(client, event.channel, event.user, question, response);
+      let blocks = await buildSuggestionBlocksForResponse(client, event.channel, event.user, question, response);
+      blocks = appendFeedbackButtons(blocks, thinkingMsg.ts);
       await client.chat.update({           
         channel: event.channel,
         ts: thinkingMsg.ts,               
@@ -702,10 +737,11 @@ app.event("app_mention", async ({ event, say, client }) => {
         blocks,
       });
     } else {
-      const blocks = appendFollowUpQuestions(
+      let blocks = appendFollowUpQuestions(
         [{ type: "section", text: { type: "mrkdwn", text: messageText } }],
         response.followUpQuestions,
       );
+      blocks = appendFeedbackButtons(blocks, thinkingMsg.ts);
       await client.chat.update({       
         channel: event.channel,
         ts: thinkingMsg.ts,           
@@ -791,10 +827,11 @@ app.event("message", async ({ event, say, client, context }) => {
         channel: event.channel,
         ts: thinkingMsg.ts,
         text: messageText,
-        blocks: buildWebSearchOfferBlocks(messageText, question),
+        blocks: buildWebSearchOfferBlocks(messageText, event.text),
       });
     } else if (Array.isArray(response.suggestedUsers) && response.suggestedUsers.length > 0) {
-      const blocks = await buildSuggestionBlocksForResponse(client, event.channel, event.user, question, response);
+      let blocks = await buildSuggestionBlocksForResponse(client, event.channel, event.user, event.text, response);
+      blocks = appendFeedbackButtons(blocks, thinkingMsg.ts);
       await client.chat.update({
         channel: event.channel,
         ts: thinkingMsg.ts,
@@ -802,10 +839,11 @@ app.event("message", async ({ event, say, client, context }) => {
         blocks,
       });
     } else {
-      const blocks = appendFollowUpQuestions(
+      let blocks = appendFollowUpQuestions(
         [{ type: "section", text: { type: "mrkdwn", text: messageText } }],
         response.followUpQuestions,
       );
+      blocks = appendFeedbackButtons(blocks, thinkingMsg.ts);
       await client.chat.update({
         channel: event.channel,
         ts: thinkingMsg.ts,
@@ -978,6 +1016,106 @@ app.action("open_intake_modal", async ({ ack, body, client }) => {
     console.error("Error opening modal:", error);
   }
 });
+
+// ============= Feedback Handlers =============
+
+app.action("feedback_helpful", async ({ ack, body, client }) => {
+  await ack();
+  const userId = body.user.id;
+  const messageTs = body.actions?.[0]?.value;
+  const channelId = body.channel?.id;
+
+  if (!userId || !messageTs || !channelId) {
+    console.error("Missing feedback data:", { userId, messageTs, channelId });
+    await client.chat.postEphemeral({
+      channel: channelId,
+      user: userId,
+      text: "Sorry, I couldn't record your feedback. Please try again.",
+    });
+    return;
+  }
+
+  try {
+    // Check if user already gave feedback on this message
+    const existingFeedback = getExistingFeedback(userId, messageTs);
+    
+    if (existingFeedback) {
+      // Update existing feedback
+      updateFeedback(userId, messageTs, "helpful");
+    } else {
+      // Store new feedback
+      storeFeedback(userId, messageTs, channelId, "helpful");
+    }
+
+    // Show ephemeral thank you message to user only in the thread (preserves original response)
+    await client.chat.postEphemeral({
+      channel: channelId,
+      user: userId,
+      thread_ts: messageTs,
+      text: "✅ Thanks for the feedback! I'm glad this was helpful.",
+    });
+
+    console.log(`✅ Feedback recorded - Helpful from ${userId}`);
+  } catch (error) {
+    console.error("Error handling helpful feedback:", error);
+    await client.chat.postEphemeral({
+      channel: channelId,
+      user: userId,
+      thread_ts: messageTs,
+      text: "Sorry, I couldn't record your feedback. Please try again.",
+    }).catch(err => console.error("Failed to send error ephemeral:", err));
+  }
+});
+
+app.action("feedback_not_helpful", async ({ ack, body, client }) => {
+  await ack();
+  const userId = body.user.id;
+  const messageTs = body.actions?.[0]?.value;
+  const channelId = body.channel?.id;
+
+  if (!userId || !messageTs || !channelId) {
+    console.error("Missing feedback data:", { userId, messageTs, channelId });
+    await client.chat.postEphemeral({
+      channel: channelId,
+      user: userId,
+      text: "Sorry, I couldn't record your feedback. Please try again.",
+    });
+    return;
+  }
+
+  try {
+    // Check if user already gave feedback on this message
+    const existingFeedback = getExistingFeedback(userId, messageTs);
+    
+    if (existingFeedback) {
+      // Update existing feedback
+      updateFeedback(userId, messageTs, "not_helpful");
+    } else {
+      // Store new feedback
+      storeFeedback(userId, messageTs, channelId, "not_helpful");
+    }
+
+    // Show ephemeral thank you message to user only in the thread (preserves original response)
+    await client.chat.postEphemeral({
+      channel: channelId,
+      user: userId,
+      thread_ts: messageTs,
+      text: "📝 Thanks for the feedback! I'll work on improving my responses.",
+    });
+
+    console.log(`✅ Feedback recorded - Not helpful from ${userId}`);
+  } catch (error) {
+    console.error("Error handling not helpful feedback:", error);
+    await client.chat.postEphemeral({
+      channel: channelId,
+      user: userId,
+      thread_ts: messageTs,
+      text: "Sorry, I couldn't record your feedback. Please try again.",
+    }).catch(err => console.error("Failed to send error ephemeral:", err));
+  }
+});
+
+// ============= Group Chat Handlers =============
 
 app.action("start_groupchat", async ({ ack, body, client }) => {
   await ack();
