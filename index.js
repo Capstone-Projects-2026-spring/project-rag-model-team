@@ -716,6 +716,20 @@ app.event("app_mention", async ({ event, say, client }) => {
       });
     };
 
+    // Check if user explicitly requested web search
+    if (isExplicitWebSearchRequest(question)) {
+      console.log("User explicitly requested web search for:", question);
+      logInteraction(event.user, `web_search: ${question}`, "web_search");
+      
+      const webResult = await searchWebForTopic(question);
+      await client.chat.update({
+        channel: event.channel,
+        ts: thinkingMsg.ts,
+        text: webResult.answer,
+      });
+      return;
+    }
+
     const response = await answerQuestion(question, event.user, false, threadHistory, setStatus);
     const messageText = buildTextResponseMessage(response);
     const isOfferWeb = response?.answer?.offerWeb;
@@ -817,6 +831,20 @@ app.event("message", async ({ event, say, client, context }) => {
         text: loading_messages?.[0] ?? status,
       });
     };
+
+    // Check if user explicitly requested web search
+    if (isExplicitWebSearchRequest(event.text)) {
+      console.log("User explicitly requested web search for:", event.text);
+      logInteraction(userId, `web_search: ${event.text}`, "web_search");
+      
+      const webResult = await searchWebForTopic(event.text);
+      await client.chat.update({
+        channel: event.channel,
+        ts: thinkingMsg.ts,
+        text: webResult.answer,
+      });
+      return;
+    }
 
     const response = await answerQuestion(event.text, userId, true, [], setStatus);
     const messageText = buildTextResponseMessage(response);
