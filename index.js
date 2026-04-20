@@ -666,28 +666,38 @@ app.event("app_mention", async ({ event, say, client }) => {
   logInteraction(event.user, question, "reactive");
 
   try {
-    const response = await answerQuestion(question, event.user, false, threadHistory);
+    const replyThreadTs = event.thread_ts || event.ts;
+
+    const thinkingMsg = await client.chat.postMessage({
+      channel: event.channel,
+      thread_ts: replyThreadTs,
+      text: "Thinking…",
+    });
+
+    const setStatus = async ({ status, loading_messages }) => {
+      await client.chat.update({
+        channel: event.channel,
+        ts: thinkingMsg.ts,
+        text: loading_messages?.[0] ?? status,
+      });
+    };
+
+    const response = await answerQuestion(question, event.user, false, threadHistory, setStatus);
     const messageText = buildTextResponseMessage(response);
     const isOfferWeb = response?.answer?.offerWeb;
 
     if (isOfferWeb) {
-      await client.chat.postMessage({
+      await client.chat.update({         
         channel: event.channel,
-        thread_ts: replyThreadTs,
+        ts: thinkingMsg.ts,                
         text: messageText,
         blocks: buildWebSearchOfferBlocks(messageText, question),
       });
     } else if (Array.isArray(response.suggestedUsers) && response.suggestedUsers.length > 0) {
-      const blocks = await buildSuggestionBlocksForResponse(
-        client,
-        event.channel,
-        event.user,
-        question,
-        response,
-      );
-      await client.chat.postMessage({
+      const blocks = await buildSuggestionBlocksForResponse(client, event.channel, event.user, question, response);
+      await client.chat.update({           
         channel: event.channel,
-        thread_ts: replyThreadTs,
+        ts: thinkingMsg.ts,               
         text: messageText,
         blocks,
       });
@@ -696,9 +706,9 @@ app.event("app_mention", async ({ event, say, client }) => {
         [{ type: "section", text: { type: "mrkdwn", text: messageText } }],
         response.followUpQuestions,
       );
-      await client.chat.postMessage({
+      await client.chat.update({       
         channel: event.channel,
-        thread_ts: replyThreadTs,
+        ts: thinkingMsg.ts,           
         text: messageText,
         blocks,
       });
@@ -762,36 +772,46 @@ app.event("message", async ({ event, say, client, context }) => {
     // Profile exists — answer the question directly (no @ needed in DMs)
     logInteraction(userId, event.text, "reactive");
     const dmThreadTs = event.thread_ts || event.ts;
-    const response = await answerQuestion(event.text, userId);
+    const thinkingMsg = await say({ text: "Thinking…" });
+
+    const setStatus = async ({ status, loading_messages }) => {
+      await client.chat.update({
+        channel: event.channel,
+        ts: thinkingMsg.ts,
+        text: loading_messages?.[0] ?? status,
+      });
+    };
+
+    const response = await answerQuestion(event.text, userId, true, [], setStatus);
     const messageText = buildTextResponseMessage(response);
     const isOfferWeb = response?.answer?.offerWeb;
 
     if (isOfferWeb) {
-      await say({
+      await client.chat.update({
+        channel: event.channel,
+        ts: thinkingMsg.ts,
         text: messageText,
-        blocks: buildWebSearchOfferBlocks(messageText, event.text),
-        thread_ts: dmThreadTs,
+        blocks: buildWebSearchOfferBlocks(messageText, question),
       });
-      return;
-    }
-
-    if (Array.isArray(response.suggestedUsers) && response.suggestedUsers.length > 0) {
-      const blocks = await buildSuggestionBlocksForResponse(
-        client,
-        event.channel,
-        userId,
-        event.text,
-        response,
-      );
-      await say({ blocks, text: messageText });
-      return;
+    } else if (Array.isArray(response.suggestedUsers) && response.suggestedUsers.length > 0) {
+      const blocks = await buildSuggestionBlocksForResponse(client, event.channel, event.user, question, response);
+      await client.chat.update({
+        channel: event.channel,
+        ts: thinkingMsg.ts,
+        text: messageText,
+        blocks,
+      });
     } else {
       const blocks = appendFollowUpQuestions(
         [{ type: "section", text: { type: "mrkdwn", text: messageText } }],
         response.followUpQuestions,
       );
-      await say({ text: messageText, blocks });
-      return;
+      await client.chat.update({
+        channel: event.channel,
+        ts: thinkingMsg.ts,
+        text: messageText,
+        blocks,
+      });
     }
   } catch (error) {
     console.error("Error handling DM:", error);

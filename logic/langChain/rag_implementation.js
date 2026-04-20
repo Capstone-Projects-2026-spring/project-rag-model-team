@@ -720,6 +720,7 @@ export async function answerQuestion(
   requesterSessionId = null,
   preemptive = false,
   threadHistory = [],
+  setStatus = async () => {},
 ) {
   try {
     const requesterContext = getRequesterAccessContext(requesterSessionId);
@@ -748,6 +749,13 @@ export async function answerQuestion(
     }
 
     if (threadHistory.length > 0) {
+      await setStatus({
+        status: "Checking conversation history…",
+        loading_messages: [
+          "Skimming through the chat logs…",
+          "Checking if we've been here before…",
+        ],
+      });
       const threadHistoryResult = await threadHistoryChain.invoke({
         message,
         threadHistory: JSON.stringify(threadHistory),
@@ -768,7 +776,16 @@ export async function answerQuestion(
         );
       }
     }
-
+    await setStatus({
+      status: "Thinking…",
+      loading_messages: [
+        "Teaching the hamsters to type faster…",
+        "Untangling the internet cables…",
+        "Consulting the office goldfish…",
+        "Polishing up the response just for you…",
+        "Convincing the AI to stop overthinking…",
+      ],
+    });
     const intent = await parseIntent(message);
     console.log("Parsed intent:", intent);
     if (preemptive && intent.type == "GENERAL") {
@@ -782,6 +799,14 @@ export async function answerQuestion(
 
     //This takes care of all user information retrieval
     if (intent.type === "GET_USER" || intent.action === "GET_USER") {
+      await setStatus({
+        status: "Looking up the team…",
+        loading_messages: [
+          "Flipping through the employee directory…",
+          "Asking around the virtual watercooler…",
+          "Checking who knows what around here…",
+        ],
+      });
       const profileRows = getAll(`SELECT id, session_id FROM user_profiles`);
       const allProfiles = profileRows.map((p) => {
         const info = getOne(`SELECT name, email, github_username, role, classification_level, experience_level, department FROM user_info WHERE profile_id = ?`, [p.id]);
@@ -842,6 +867,14 @@ export async function answerQuestion(
       intent.type === "SEARCH_DRIVE" ||
       intent.action === "SEARCH_DRIVE"
     ) {
+      await setStatus({
+        status: "Searching the docs…",
+        loading_messages: [
+          "Digging through the filing cabinet…",
+          "Reading every doc so you don't have to…",
+          "Ctrl+F but make it AI…",
+        ],
+      });
       console.log("Searching drive for topic:", intent.query);
       const driveResult = await searchDriveForTopic(
         intent.query,
@@ -869,6 +902,13 @@ export async function answerQuestion(
     // Generate follow-up questions
     let followUpQuestions = null;
     if (!preemptive) {
+      await setStatus({
+        status: "Wrapping up…",
+        loading_messages: [
+          "Thinking of good follow-up questions…",
+          "Putting a bow on it…",
+        ],
+      });
       followUpQuestions = await generateFollowUpQuestions(
         message,
         answer,
