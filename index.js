@@ -541,6 +541,7 @@ function buildFeedbackButtons(messageTs) {
         text: { type: "plain_text", text: "👎 Not helpful", emoji: true },
         action_id: "feedback_not_helpful",
         value: messageTs,
+        style: "danger",
       },
     ],
   };
