@@ -5,11 +5,12 @@ import slackHandlers from "./google_api/slack.js";
 import {
   answerQuestion,
   autoClassifyDocument,
+  searchWebForTopic,
 } from "./logic/langChain/rag_implementation.js";
 import { startGraphQL } from "./logic/graphql_setup/graphql_implementation.js";
-import { initDatabase } from "./logic/database/sqlite.js";
+import { initDatabase, getOne, runQuery } from "./logic/database/sqlite.js";
 import { listFiles } from "./google_api/driveService.js";
-import { annotateFilesWithClassification } from "./logic/security/access_control.js";
+import { annotateFilesWithClassification, getClassificationForRole } from "./logic/security/access_control.js";
 import {
   upsertDocumentTags,
   getDocumentTags,
@@ -51,11 +52,17 @@ const interactionLogMutation = `
 `;
 
 function logInteraction(userId, message, type) {
-  queryGraphQL(interactionLogMutation, {
-    sessionID: userId,
-    interactionType: type,
-    message,
-  }).catch((err) => console.warn("Interaction logging failed:", err.message));
+  try {
+    const profile = getOne(`SELECT id FROM user_profiles WHERE session_id = ?`, [userId]);
+    if (profile) {
+      runQuery(
+        `INSERT INTO user_interactions (profile_id, interaction_type, message) VALUES (?, ?, ?)`,
+        [profile.id, type || "reactive", message]
+      );
+    }
+  } catch (err) {
+    console.warn("Interaction logging failed:", err.message);
+  }
 }
 
 /**
@@ -132,6 +139,23 @@ function clearPendingWebSearchOffer(threadTs) {
 }
 
 
+function fetchUserProfileDirect(sessionId) {
+  const profile = getOne(
+    `SELECT id, session_id, created_at FROM user_profiles WHERE session_id = ?`,
+    [sessionId],
+  );
+  if (!profile) return null;
+  const userInfo = getOne(`SELECT * FROM user_info WHERE profile_id = ?`, [
+    profile.id,
+  ]);
+  return {
+    id: profile.id,
+    session_id: profile.session_id,
+    userInfo: userInfo || null,
+    hasCompletedIntake: !!userInfo,
+  };
+}
+
 async function fetchUserProfile(sessionId) {
   const query = `
     query ($session_id: String!) {
@@ -161,82 +185,64 @@ async function fetchUserProfile(sessionId) {
   return res?.getUserProfile || null;
 }
 
-async function upsertUserProfile(sessionId, data) {
-  const existing = await fetchUserProfile(sessionId);
+function upsertUserProfile(sessionId, data) {
+  const existing = fetchUserProfileDirect(sessionId);
   const existingInfo = existing?.userInfo || {};
-  const payload = {
-    session_id: sessionId,
+  const classificationLevel = getClassificationForRole(
+    data.role ?? existingInfo.role,
+  );
+  const merged = {
     name: data.name ?? existingInfo.name ?? null,
     email: data.email ?? existingInfo.email ?? null,
-    github_username:
-      data.github_username ?? existingInfo.github_username ?? null,
-    active_github_repo:
-      data.active_github_repo ?? existingInfo.active_github_repo ?? null,
+    github_username: data.github_username ?? existingInfo.github_username ?? null,
+    active_github_repo: data.active_github_repo ?? existingInfo.active_github_repo ?? null,
     role: data.role ?? existingInfo.role,
+    classification_level: classificationLevel,
     experience_level: data.experience_level ?? existingInfo.experience_level,
     department: data.department ?? existingInfo.department ?? null,
-    areas_of_interest:
-      data.areas_of_interest ??
-      existingInfo.areas_of_interest ??
-      JSON.stringify([]),
-    technical_skills:
-      data.technical_skills ??
-      existingInfo.technical_skills ??
-      JSON.stringify([]),
-    learning_goals:
-      data.learning_goals ?? existingInfo.learning_goals ?? JSON.stringify([]),
-    preferred_content_complexity:
-      data.preferred_content_complexity ??
-      existingInfo.preferred_content_complexity ??
-      null,
+    areas_of_interest: data.areas_of_interest ?? existingInfo.areas_of_interest ?? "[]",
+    technical_skills: data.technical_skills ?? existingInfo.technical_skills ?? "[]",
+    learning_goals: data.learning_goals ?? existingInfo.learning_goals ?? "[]",
+    preferred_content_complexity: data.preferred_content_complexity ?? existingInfo.preferred_content_complexity ?? null,
   };
-  console.log("📝 Processing intake submission for user:", sessionId);
 
   if (existing) {
-    const updateMutation = `
-      mutation ($session_id: String!, $input: UserProfileInput!) {
-        updateUserProfile(session_id: $session_id, input: $input) {
-          id
-          session_id
-          hasCompletedIntake
-          userInfo {
-            id
-            name
-            github_username
-            active_github_repo
-            role
-            classification_level
-          }
-        }
-      }
-    `;
-    return (
-      await queryGraphQL(updateMutation, {
-        session_id: sessionId,
-        input: payload,
-      })
-    ).updateUserProfile;
+    runQuery(
+      `UPDATE user_info SET
+        name=?, email=?, github_username=?, active_github_repo=?, role=?,
+        classification_level=?, experience_level=?, department=?,
+        areas_of_interest=?, technical_skills=?, learning_goals=?,
+        preferred_content_complexity=?, updated_at=CURRENT_TIMESTAMP
+       WHERE profile_id=?`,
+      [
+        merged.name, merged.email, merged.github_username, merged.active_github_repo,
+        merged.role, merged.classification_level, merged.experience_level, merged.department,
+        merged.areas_of_interest, merged.technical_skills, merged.learning_goals,
+        merged.preferred_content_complexity, existing.id,
+      ],
+    );
+  } else {
+    runQuery(`INSERT INTO user_profiles (session_id) VALUES (?)`, [sessionId]);
+    const profile = getOne(
+      `SELECT id FROM user_profiles WHERE session_id = ?`,
+      [sessionId],
+    );
+    runQuery(
+      `INSERT INTO user_info (
+        profile_id, session_id, name, email, github_username, active_github_repo,
+        role, classification_level, experience_level, department,
+        areas_of_interest, technical_skills, learning_goals, preferred_content_complexity
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      [
+        profile.id, sessionId, merged.name, merged.email, merged.github_username,
+        merged.active_github_repo, merged.role, merged.classification_level,
+        merged.experience_level, merged.department, merged.areas_of_interest,
+        merged.technical_skills, merged.learning_goals, merged.preferred_content_complexity,
+      ],
+    );
   }
 
-  const createMutation = `
-    mutation ($input: UserProfileInput!) {
-      createUserProfile(input: $input) {
-        id
-        session_id
-        hasCompletedIntake
-        userInfo {
-          id
-          name
-          github_username
-          active_github_repo
-          role
-          classification_level
-        }
-      }
-    }
-  `;
-  return (await queryGraphQL(createMutation, { input: payload }))
-    .createUserProfile;
+  return fetchUserProfileDirect(sessionId);
 }
 
 function getCommandsList() {
@@ -468,19 +474,50 @@ function buildUserSuggestionBlocks(
 }
 
 function appendFollowUpQuestions(blocks, followUpQuestions) {
-  if (Array.isArray(followUpQuestions) && followUpQuestions.length > 0) {
-    blocks.push({ type: "divider" });
+  if (!Array.isArray(followUpQuestions) || followUpQuestions.length === 0) return blocks;
+  blocks.push({ type: "divider" });
+  blocks.push({
+    type: "section",
+    text: { type: "mrkdwn", text: "*You might also want to ask:*" },
+  });
+  followUpQuestions.slice(0, 5).forEach((q, i) => {
     blocks.push({
       type: "section",
-      text: {
-        type: "mrkdwn",
-        text: `*You might also want to ask:*
-${followUpQuestions.map((question, index) => `${index + 1}. ${question}`).join("\n")}`,
+      text: { type: "mrkdwn", text: q },
+      accessory: {
+        type: "button",
+        text: { type: "plain_text", text: "Ask" },
+        action_id: `ask_followup_question_${i}`,
+        value: q.slice(0, 2000),
       },
     });
-  }
-
+  });
   return blocks;
+}
+
+function buildWebSearchOfferBlocks(messageText, question) {
+  return [
+    { type: "section", text: { type: "mrkdwn", text: messageText } },
+    { type: "section", text: { type: "mrkdwn", text: "Would you like me to search the web for more information?" } },
+    {
+      type: "actions",
+      elements: [
+        {
+          type: "button",
+          text: { type: "plain_text", text: "Yes, search the web" },
+          action_id: "web_search_yes",
+          value: question.slice(0, 2000),
+          style: "primary",
+        },
+        {
+          type: "button",
+          text: { type: "plain_text", text: "No thanks" },
+          action_id: "web_search_no",
+          value: question.slice(0, 2000),
+        },
+      ],
+    },
+  ];
 }
 
 function buildTextResponseMessage(response, shouldShowGitHubReminder = false) {
@@ -488,20 +525,19 @@ function buildTextResponseMessage(response, shouldShowGitHubReminder = false) {
     return response || "I apologize, I was not able to answer this.";
   }
 
-  let messageText =
-    response.answer || "I apologize, I was not able to answer this.";
+  // offerWeb case: answer is an object with {internal, offerWeb, query}
+  const rawAnswer = response.answer;
+  let messageText;
+  if (rawAnswer && typeof rawAnswer === "object" && rawAnswer.offerWeb) {
+    messageText = rawAnswer.internal || "I couldn't find relevant information in our internal documents.";
+  } else {
+    messageText = rawAnswer || "I apologize, I was not able to answer this.";
+  }
   if (shouldShowGitHubReminder) {
     messageText =
       "Tip: link your GitHub username with `/link-username your_username` to improve teammate recommendations and help others find you for relevant repo work.\n\n" +
       messageText;
   }
-  if (response.followUpQuestions && response.followUpQuestions.length > 0) {
-    messageText += "\n\n💡 *You might also want to ask:*\n";
-    response.followUpQuestions.forEach((question, index) => {
-      messageText += `${index + 1}. ${question}\n`;
-    });
-  }
-
   return messageText;
 }
 
@@ -589,6 +625,7 @@ app.event("app_mention", async ({ event, say, client }) => {
   const profile = db
     .prepare("SELECT * FROM user_profiles WHERE session_id = ?")
     .get(event.user);
+  console.log(`[app_mention] user=${event.user} profile=${JSON.stringify(profile)}`);
 
   if (!profile) {
     await client.chat.postEphemeral({
@@ -627,37 +664,72 @@ app.event("app_mention", async ({ event, say, client }) => {
   const replyThreadTs = event.thread_ts || event.ts;
   console.log("User asked a question:", question);
   logInteraction(event.user, question, "reactive");
-  const response = await answerQuestion(question, event.user);
 
-  if (typeof response === 'string') {
-    await say({ text: response });
-  } else {
-    let messageText = response.answer;
+  try {
+    const response = await answerQuestion(question, event.user, false, threadHistory);
+    const messageText = buildTextResponseMessage(response);
+    const isOfferWeb = response?.answer?.offerWeb;
 
-    if (response.followUpQuestions && response.followUpQuestions.length > 0) {
-      messageText += "\n\n💡 *You might also want to ask:*\n";
-      response.followUpQuestions.forEach((question, index) => {
-        messageText += `${index + 1}. ${question}\n`;
+    if (isOfferWeb) {
+      await client.chat.postMessage({
+        channel: event.channel,
+        thread_ts: replyThreadTs,
+        text: messageText,
+        blocks: buildWebSearchOfferBlocks(messageText, question),
+      });
+    } else if (Array.isArray(response.suggestedUsers) && response.suggestedUsers.length > 0) {
+      const blocks = await buildSuggestionBlocksForResponse(
+        client,
+        event.channel,
+        event.user,
+        question,
+        response,
+      );
+      await client.chat.postMessage({
+        channel: event.channel,
+        thread_ts: replyThreadTs,
+        text: messageText,
+        blocks,
+      });
+    } else {
+      const blocks = appendFollowUpQuestions(
+        [{ type: "section", text: { type: "mrkdwn", text: messageText } }],
+        response.followUpQuestions,
+      );
+      await client.chat.postMessage({
+        channel: event.channel,
+        thread_ts: replyThreadTs,
+        text: messageText,
+        blocks,
       });
     }
-
-    await say({ text: messageText });
+  } catch (err) {
+    console.error("Error in app_mention handler:", err);
+    await client.chat.postMessage({
+      channel: event.channel,
+      thread_ts: replyThreadTs,
+      text: "Sorry, I ran into an error. Please try again.",
+    });
   }
 });
 
 // ============= DM Handler =============
 
-app.event("message", async ({ event, say, client }) => {
+app.event("message", async ({ event, say, client, context }) => {
   if (event.bot_id) {
     return;
   }
-  
+
   // Skip if this is a reply in a thread (handled by thread listener above)
-  // thread_ts is the timestamp of the parent message in a thread
   if (event.thread_ts) {
     return;
   }
-  
+
+  // Skip app mentions — the app_mention handler covers these
+  if (context.botUserId && event.text?.includes(`<@${context.botUserId}>`)) {
+    return;
+  }
+
   const userId = event.user;
   if (event.channel_type !== "im" && event.action !== "app_mention") {
     const preemptiveResponse = await answerQuestion(event.text, event.user, true);
@@ -677,6 +749,7 @@ app.event("message", async ({ event, say, client }) => {
     const profile = db
       .prepare("SELECT * FROM user_profiles WHERE session_id = ?")
       .get(userId);
+    console.log(`[dm_handler] user=${userId} profile=${JSON.stringify(profile)}`);
 
     if (!profile) {
       await say({
@@ -688,12 +761,21 @@ app.event("message", async ({ event, say, client }) => {
 
     // Profile exists — answer the question directly (no @ needed in DMs)
     logInteraction(userId, event.text, "reactive");
+    const dmThreadTs = event.thread_ts || event.ts;
     const response = await answerQuestion(event.text, userId);
+    const messageText = buildTextResponseMessage(response);
+    const isOfferWeb = response?.answer?.offerWeb;
 
-    if (
-      Array.isArray(response.suggestedUsers) &&
-      response.suggestedUsers.length > 0
-    ) {
+    if (isOfferWeb) {
+      await say({
+        text: messageText,
+        blocks: buildWebSearchOfferBlocks(messageText, event.text),
+        thread_ts: dmThreadTs,
+      });
+      return;
+    }
+
+    if (Array.isArray(response.suggestedUsers) && response.suggestedUsers.length > 0) {
       const blocks = await buildSuggestionBlocksForResponse(
         client,
         event.channel,
@@ -701,11 +783,14 @@ app.event("message", async ({ event, say, client }) => {
         event.text,
         response,
       );
-      await say({ blocks, text: response.answer, thread_ts: threadTs });
+      await say({ blocks, text: messageText });
       return;
     } else {
-      const messageText = buildTextResponseMessage(response);
-      await say({ text: messageText, thread_ts: threadTs });
+      const blocks = appendFollowUpQuestions(
+        [{ type: "section", text: { type: "mrkdwn", text: messageText } }],
+        response.followUpQuestions,
+      );
+      await say({ text: messageText, blocks });
       return;
     }
   } catch (error) {
@@ -1041,13 +1126,13 @@ app.view("intake_submission", async ({ ack, body, view, client }) => {
   const channelId = view.private_metadata || userId;
 
   try {
-    await upsertUserProfile(userId, {
+    const result = upsertUserProfile(userId, {
       name: displayName,
       role,
       experience_level: experienceLevel,
       github_username: githubUsername || undefined,
     });
-    console.log("✅ Profile saved successfully for:", userId);
+    console.log("✅ Profile saved for:", userId);
 
     await client.chat.postEphemeral({
       channel: channelId,
@@ -1055,7 +1140,7 @@ app.view("intake_submission", async ({ ack, body, view, client }) => {
       text: `✅ Welcome, ${displayName}! Your profile is set up.\n\n${getCommandsList()}`,
     });
   } catch (error) {
-    console.error("❌ Error saving intake:", error);
+    console.log("❌ INTAKE ERROR:", error.message, error.stack);
     await client.chat.postEphemeral({
       channel: channelId,
       user: userId,
@@ -1610,6 +1695,62 @@ function getIntakeModal() {
     ],
   };
 }
+
+// ============= Follow-up Question Button Handler =============
+
+app.action(/^ask_followup_question_\d+$/, async ({ ack, body, client }) => {
+  await ack();
+  const question = body.actions[0].value;
+  const userId = body.user.id;
+  const channelId = body.channel?.id || userId;
+  const threadTs = body.message?.thread_ts || body.container?.thread_ts || body.message?.ts;
+  console.log("Follow-up thread_ts:", threadTs, "| message.thread_ts:", body.message?.thread_ts, "| container.thread_ts:", body.container?.thread_ts);
+
+  try {
+    logInteraction(userId, question);
+    const response = await answerQuestion(question, userId);
+    const text = buildTextResponseMessage(response);
+    const blocks = appendFollowUpQuestions(
+      [{ type: "section", text: { type: "mrkdwn", text } }],
+      response.followUpQuestions,
+    );
+    await client.chat.postEphemeral({ channel: channelId, user: userId, text, blocks, thread_ts: threadTs });
+  } catch (err) {
+    console.error("Error handling follow-up question button:", err);
+  }
+});
+
+// ============= Web Search Yes/No Button Handlers =============
+
+app.action("web_search_yes", async ({ ack, body, client }) => {
+  await ack();
+  const question = body.actions[0].value;
+  const userId = body.user.id;
+  const channelId = body.channel?.id || userId;
+  const threadTs = body.message?.thread_ts || body.container?.thread_ts || body.message?.ts;
+
+  try {
+    logInteraction(userId, `web_search: ${question}`, "web_search");
+    const webResult = await searchWebForTopic(question);
+    await client.chat.postMessage({ channel: channelId, thread_ts: threadTs, text: webResult.answer });
+  } catch (err) {
+    console.error("Error handling web search yes:", err);
+  }
+});
+
+app.action("web_search_no", async ({ ack, body, client }) => {
+  await ack();
+  const userId = body.user.id;
+  const channelId = body.channel?.id || userId;
+  const threadTs = body.message?.thread_ts || body.container?.thread_ts || body.message?.ts;
+
+  await client.chat.postEphemeral({
+    channel: channelId,
+    user: userId,
+    thread_ts: threadTs,
+    text: "No problem! Feel free to ask something else.",
+  });
+});
 
 // ============= Start the Bot =============
 let BOT_USER_ID;
