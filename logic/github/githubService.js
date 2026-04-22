@@ -689,7 +689,6 @@ export function recommendGitHubUsersForTopic(
     allCombinedStats.map((stats) => stats.total_commits).sort((a, b) => b - a)[
       Math.min(2, Math.max(allCombinedStats.length - 1, 0))
     ] || 1;
-  const allowGitHubOnlyFallback = profiles.length === 0;
   const profilesByGitHubUsername = new Map(
     profiles
       .filter((profile) =>
@@ -704,9 +703,6 @@ export function recommendGitHubUsersForTopic(
   const candidates = Array.from(contributorGroups.entries())
     .map(([githubUsername, rows]) => {
       const profile = profilesByGitHubUsername.get(githubUsername) || null;
-      if (!profile && !allowGitHubOnlyFallback) {
-        return null;
-      }
 
       const combinedStats = combineContributorStats(rows);
       const topicFileMatches = matchKeywords(

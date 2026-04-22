@@ -221,6 +221,69 @@ describe("parseGitHubRepository", () => {
     expect(result.suggestedUsers[0].why[0]).toContain('*"database"*');
   });
 
+  it("includes unlinked GitHub contributors even when some linked profiles exist", () => {
+    mockGetAll.mockImplementation((sql) => {
+      if (sql.includes("SELECT full_name FROM github_repositories")) {
+        return [{ full_name: "org/solo-repo" }];
+      }
+
+      return [
+        {
+          github_login: "linked-user",
+          github_name: "Linked User",
+          total_commits: 2,
+          commits_last_15_days: 2,
+          commits_last_30_days: 2,
+          commits_last_90_days: 2,
+          commits_last_180_days: 2,
+          recent_commits: 2,
+          last_commit_at: "2026-04-06T12:00:00Z",
+          touched_files: '["src/misc.js"]',
+          recent_messages: '["misc cleanup"]',
+          full_name: "org/solo-repo",
+        },
+        {
+          github_login: "octocat",
+          github_name: "Octo Cat",
+          total_commits: 5,
+          commits_last_15_days: 5,
+          commits_last_30_days: 5,
+          commits_last_90_days: 5,
+          commits_last_180_days: 5,
+          recent_commits: 5,
+          last_commit_at: "2026-04-07T12:00:00Z",
+          touched_files: '["src/auth/login.js"]',
+          recent_messages: '["auth cleanup"]',
+          full_name: "org/solo-repo",
+        },
+      ];
+    });
+
+    const result = recommendGitHubUsersForTopic(
+      "Who can help with auth?",
+      [
+        {
+          session_id: "U_LINKED",
+          userInfo: {
+            github_username: "linked-user",
+            name: "Linked User",
+            role: "designer",
+            department: "Design",
+          },
+        },
+      ],
+    );
+
+    expect(result.suggestedUsers).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          github_username: "octocat",
+          session_id: null,
+        }),
+      ]),
+    );
+  });
+
   it("shows last sync freshness in the repo analytics banner", () => {
     const nowSpy = jest
       .spyOn(Date, "now")

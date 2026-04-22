@@ -485,7 +485,7 @@ function appendFollowUpQuestions(blocks, followUpQuestions) {
     type: "section",
     text: { type: "mrkdwn", text: "*You might also want to ask:*" },
   });
-  followUpQuestions.slice(0, 5).forEach((q, i) => {
+  followUpQuestions.slice(0, 3).forEach((q, i) => {
     blocks.push({
       type: "section",
       text: { type: "mrkdwn", text: q },
@@ -846,7 +846,7 @@ app.event("message", async ({ event, say, client, context }) => {
       return;
     }
 
-    const response = await answerQuestion(event.text, userId, true, [], setStatus);
+    const response = await answerQuestion(event.text, userId, false, [], setStatus);
     const messageText = buildTextResponseMessage(response);
     const isOfferWeb = response?.answer?.offerWeb;
 
@@ -1896,10 +1896,28 @@ app.action(/^ask_followup_question_\d+$/, async ({ ack, body, client }) => {
     logInteraction(userId, question);
     const response = await answerQuestion(question, userId);
     const text = buildTextResponseMessage(response);
-    const blocks = appendFollowUpQuestions(
-      [{ type: "section", text: { type: "mrkdwn", text } }],
-      response.followUpQuestions,
-    );
+    let blocks;
+
+    if (response?.answer?.offerWeb) {
+      blocks = buildWebSearchOfferBlocks(text, question);
+    } else if (
+      Array.isArray(response.suggestedUsers) &&
+      response.suggestedUsers.length > 0
+    ) {
+      blocks = await buildSuggestionBlocksForResponse(
+        client,
+        channelId,
+        userId,
+        question,
+        response,
+      );
+    } else {
+      blocks = appendFollowUpQuestions(
+        [{ type: "section", text: { type: "mrkdwn", text } }],
+        response.followUpQuestions,
+      );
+    }
+
     await client.chat.postEphemeral({ channel: channelId, user: userId, text, blocks, thread_ts: threadTs });
   } catch (err) {
     console.error("Error handling follow-up question button:", err);

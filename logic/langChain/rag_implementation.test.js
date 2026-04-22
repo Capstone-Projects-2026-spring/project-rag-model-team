@@ -49,7 +49,7 @@ function getChainHandler(template) {
     return chainHandlers.autoClassify;
   }
 
-  if (template.includes("generate 3-5 relevant follow-up questions")) {
+  if (template.includes("generate up to 3 relevant follow-up questions")) {
     return chainHandlers.followUpQuestions;
   }
 
@@ -206,6 +206,9 @@ describe("answerQuestion access filtering", () => {
     chainHandlers.intent.mockResolvedValue(
       '{"type":"GET_USER","action":"GET_ALL"}',
     );
+    chainHandlers.userInfo.mockResolvedValue(
+      '{"suggestions":[{"session_id":"U_RECENT","name":"Riley Recent","role":"qa","department":"Quality","reason":"Profile context suggests Riley often supports CI and auth-related validation."}],"explanation":"Alex and Riley both look helpful."}',
+    );
     chainHandlers.followUpQuestions.mockResolvedValue('[]');
 
     mockRecommendGitHubUsersForTopic.mockReturnValue({
@@ -254,6 +257,7 @@ describe("answerQuestion access filtering", () => {
     const response = await answerQuestion("Who can help with auth?", "U_REQUESTER");
 
     expect(response.answer).toContain("strong references");
+    expect(response.answer).toContain("ranked primarily from synced GitHub activity");
     expect(response.suggestedUsers).toHaveLength(2);
     expect(response.githubSyncContext).toEqual(
       expect.objectContaining({
@@ -261,6 +265,12 @@ describe("answerQuestion access filtering", () => {
       }),
     );
     expect(response.suggestedUsers[0].why).toBeDefined();
+    expect(response.suggestedUsers[1]).toEqual(
+      expect.objectContaining({
+        session_id: "U_RECENT",
+        name: "Riley Recent",
+      }),
+    );
     expect(mockRecommendGitHubUsersForTopic).toHaveBeenCalledTimes(1);
     expect(mockRecommendGitHubUsersForTopic).toHaveBeenCalledWith(
       "Who can help with auth?",
@@ -268,7 +278,270 @@ describe("answerQuestion access filtering", () => {
       3,
       "Capstone-Projects-2026-spring/project-rag-model-team",
     );
+    expect(chainHandlers.userInfo).toHaveBeenCalledTimes(1);
+  });
+
+  it("routes obvious who-worked-on questions to GitHub recommendations without relying on the LLM intent classifier", async () => {
+    chainHandlers.intent.mockRejectedValue(new Error("Groq unavailable"));
+    chainHandlers.userInfo.mockResolvedValue(
+      '{"suggestions":[],"explanation":"No additional profile-based suggestions."}',
+    );
+    chainHandlers.followUpQuestions.mockResolvedValue('[]');
+
+    mockRecommendGitHubUsersForTopic.mockReturnValue({
+      answer:
+        'Here are a few people who look like strong references for "Who worked on Langchain?" based on synced GitHub activity.',
+      suggestedUsers: [
+        {
+          session_id: null,
+          name: "I584999",
+          github_username: "wsimst",
+          role: null,
+          department: null,
+          reason: "Worked on files related to langchain.",
+          why: [
+            "Worked on files related to langchain.",
+            "Made 15 recent commits in org/repo.",
+          ],
+        },
+      ],
+      syncContext: {
+        repoFullName: "Capstone-Projects-2026-spring/project-rag-model-team",
+        syncedAt: "2026-04-10T10:00:00Z",
+      },
+    });
+
+    mockGetOne
+      .mockReturnValueOnce({ id: 1 })
+      .mockReturnValueOnce({
+        role: "junior_dev",
+        classification_level: "internal",
+        active_github_repo: "Capstone-Projects-2026-spring/project-rag-model-team",
+      });
+    mockGetAll.mockReturnValueOnce([]);
+
+    const response = await answerQuestion(
+      "Who worked on Langchain?",
+      "U_REQUESTER",
+    );
+
+    expect(response.answer).toContain("strong references");
+    expect(response.suggestedUsers).toEqual([
+      expect.objectContaining({
+        github_username: "wsimst",
+      }),
+    ]);
+    expect(mockRecommendGitHubUsersForTopic).toHaveBeenCalledWith(
+      "Who worked on Langchain?",
+      [],
+      3,
+      "Capstone-Projects-2026-spring/project-rag-model-team",
+    );
+    expect(chainHandlers.intent).not.toHaveBeenCalled();
     expect(chainHandlers.userInfo).not.toHaveBeenCalled();
+  });
+
+  it("does not reuse thread-history answers for obvious user-centered GitHub questions", async () => {
+    chainHandlers.threadHistory.mockResolvedValue(
+      '{"threadAnswer":true,"answer":"Earlier thread answer"}',
+    );
+    chainHandlers.userInfo.mockResolvedValue(
+      '{"suggestions":[],"explanation":"No additional profile-based suggestions."}',
+    );
+    chainHandlers.followUpQuestions.mockResolvedValue('[]');
+
+    mockRecommendGitHubUsersForTopic.mockReturnValue({
+      answer:
+        'Here are a few people who look like strong references for "Who worked on frontend?" based on synced GitHub activity.',
+      suggestedUsers: [
+        {
+          session_id: null,
+          name: "octocat",
+          github_username: "octocat",
+          role: null,
+          department: null,
+          reason: "Worked on files related to frontend.",
+          why: [
+            "Worked on files related to frontend.",
+            "Made 4 recent commits in org/repo.",
+          ],
+        },
+      ],
+      syncContext: {
+        repoFullName: "Capstone-Projects-2026-spring/project-rag-model-team",
+        syncedAt: "2026-04-10T10:00:00Z",
+      },
+    });
+
+    mockGetOne
+      .mockReturnValueOnce({ id: 1 })
+      .mockReturnValueOnce({
+        role: "junior_dev",
+        classification_level: "internal",
+        active_github_repo: "Capstone-Projects-2026-spring/project-rag-model-team",
+      });
+    mockGetAll.mockReturnValueOnce([]);
+
+    const response = await answerQuestion(
+      "Who worked on frontend?",
+      "U_REQUESTER",
+      false,
+      [{ role: "assistant", content: "Earlier thread answer" }],
+    );
+
+    expect(response.answer).toContain("strong references");
+    expect(response.suggestedUsers).toEqual([
+      expect.objectContaining({
+        github_username: "octocat",
+      }),
+    ]);
+    expect(chainHandlers.threadHistory).not.toHaveBeenCalled();
+  });
+
+  it("merges GitHub and profile reasoning for the same suggested user", async () => {
+    chainHandlers.intent.mockResolvedValue(
+      '{"type":"GET_USER","action":"GET_ALL"}',
+    );
+    chainHandlers.userInfo.mockResolvedValue(
+      '{"suggestions":[{"session_id":"U_AUTH","name":"Alex Auth","role":"senior_dev","department":"Platform","reason":"Alex owns authentication design decisions."}],"explanation":"Alex looks like the best fit."}',
+    );
+    chainHandlers.followUpQuestions.mockResolvedValue('[]');
+
+    mockRecommendGitHubUsersForTopic.mockReturnValue({
+      answer:
+        'Here are a few people who look like strong references for "Who can help with auth?" based on synced GitHub activity.',
+      suggestedUsers: [
+        {
+          session_id: "U_AUTH",
+          name: "Alex Auth",
+          github_username: "alexauth",
+          role: "senior_dev",
+          department: "Platform",
+          reason: "Worked on files related to auth.",
+          why: [
+            "Worked on files related to auth.",
+            "Made 3 recent commits in org/repo.",
+          ],
+        },
+      ],
+      syncContext: {
+        repoFullName: "Capstone-Projects-2026-spring/project-rag-model-team",
+        syncedAt: "2026-04-09T10:00:00Z",
+      },
+    });
+
+    mockGetOne
+      .mockReturnValueOnce({ id: 1 })
+      .mockReturnValueOnce({
+        role: "junior_dev",
+        classification_level: "internal",
+        active_github_repo: "Capstone-Projects-2026-spring/project-rag-model-team",
+      })
+      .mockReturnValueOnce({
+        name: "Alex Auth",
+        github_username: "alexauth",
+        role: "senior_dev",
+        classification_level: "internal",
+        department: "Platform",
+      });
+    mockGetAll.mockReturnValueOnce([
+      { id: "1", session_id: "U_AUTH" },
+    ]);
+
+    const response = await answerQuestion("Who can help with auth?", "U_REQUESTER");
+
+    expect(response.suggestedUsers).toHaveLength(1);
+    expect(response.suggestedUsers[0].why).toEqual(
+      expect.arrayContaining([
+        "Worked on files related to auth.",
+        "Made 3 recent commits in org/repo.",
+        "Alex owns authentication design decisions.",
+      ]),
+    );
+  });
+
+  it("does not add profile-only users ahead of GitHub-ranked results", async () => {
+    chainHandlers.intent.mockResolvedValue(
+      '{"type":"GET_USER","action":"GET_ALL"}',
+    );
+    chainHandlers.userInfo.mockResolvedValue(
+      '{"suggestions":[{"session_id":"U_DESIGN","name":"Will Sims","role":"designer","department":"Design","reason":"Will has frontend design expertise."}],"explanation":"Will looks helpful."}',
+    );
+    chainHandlers.followUpQuestions.mockResolvedValue('[]');
+
+    mockRecommendGitHubUsersForTopic.mockReturnValue({
+      answer:
+        'Here are a few people who look like strong references for "Who worked on Langchain?" based on synced GitHub activity.',
+      suggestedUsers: [
+        {
+          session_id: null,
+          name: "I584999",
+          github_username: "wsimst",
+          role: null,
+          department: null,
+          reason: "Worked on files related to langchain.",
+          why: [
+            "Worked on files related to langchain.",
+            "Made 15 recent commits in org/repo.",
+          ],
+        },
+        {
+          session_id: null,
+          name: "Andrew",
+          github_username: "andrewkelley-1",
+          role: null,
+          department: null,
+          reason: "Worked on files related to langchain.",
+          why: [
+            "Worked on files related to langchain.",
+            "Made 5 recent commits in org/repo.",
+          ],
+        },
+      ],
+      syncContext: {
+        repoFullName: "Capstone-Projects-2026-spring/project-rag-model-team",
+        syncedAt: "2026-04-10T10:00:00Z",
+      },
+    });
+
+    mockGetOne
+      .mockReturnValueOnce({ id: 1 })
+      .mockReturnValueOnce({
+        role: "junior_dev",
+        classification_level: "internal",
+        active_github_repo: "Capstone-Projects-2026-spring/project-rag-model-team",
+      })
+      .mockReturnValueOnce({
+        name: "Will Sims",
+        github_username: "wsimst",
+        role: "designer",
+        classification_level: "internal",
+        department: "Design",
+      });
+    mockGetAll.mockReturnValueOnce([
+      { id: "1", session_id: "U_DESIGN" },
+    ]);
+
+    const response = await answerQuestion(
+      "Who worked on Langchain?",
+      "U_REQUESTER",
+    );
+
+    expect(response.suggestedUsers).toHaveLength(2);
+    expect(response.suggestedUsers).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ github_username: "wsimst" }),
+        expect.objectContaining({ github_username: "andrewkelley-1" }),
+      ]),
+    );
+    expect(response.suggestedUsers).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          session_id: "U_DESIGN",
+          name: "Will Sims",
+        }),
+      ]),
+    );
   });
 
   it("returns GitHub username recommendations even when no Slack users are linked yet", async () => {
