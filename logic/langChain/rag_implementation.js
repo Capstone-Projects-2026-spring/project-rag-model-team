@@ -230,7 +230,7 @@ Be strict. If the documents are about a project but don't explain the topic the 
 
 //JSON ONLY
 const followUpQuestionsPrompt = PromptTemplate.fromTemplate(`
-    Based on the user's original question and the answer provided, generate 3-5 relevant follow-up questions that would help the user explore related topics or dive deeper into the subject.
+    Based on the user's original question and the answer provided, generate up to 3 relevant follow-up questions that would help the user explore related topics or dive deeper into the subject.
 
     Original Question: {originalQuestion}
     Answer Provided: {answer}
@@ -286,8 +286,33 @@ const webSearchQueryPrompt = PromptTemplate.fromTemplate(webSearchQueryTemplate)
 const webContentSummarizationPrompt = PromptTemplate.fromTemplate(webSummarizationTemplate);
 //Functions to call the chains and decide what to do with the results
 
+function inferRuleBasedIntent(message) {
+  const normalized = String(message || "").trim().toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+
+  const obviousUserQueryPatterns = [
+    /^(who|whom)\b/,
+    /\bwho\s+(worked on|works on|can help|should i talk to|knows about|owns|maintains|is working on|has worked on)\b/,
+    /\b(anyone|someone|person|people|teammate|team member|expert|contact)\b.*\b(help|know|worked on|works on|owner|maintainer)\b/,
+  ];
+
+  if (obviousUserQueryPatterns.some((pattern) => pattern.test(normalized))) {
+    return { type: "GET_USER", action: "GET_ALL" };
+  }
+
+  return null;
+}
+
 async function parseIntent(message) {
   console.log("parseIntent invoked with message:", message);
+  const inferredIntent = inferRuleBasedIntent(message);
+  if (inferredIntent) {
+    console.log("Rule-based intent result:", inferredIntent);
+    return inferredIntent;
+  }
+
   try {
     const result = await intentChain.invoke({ message });
     console.log("Raw intent result:", result);
@@ -331,6 +356,113 @@ async function suggestUserForTopic(userInfo, topic) {
     suggestions: [],
     explanation: result,
   };
+}
+
+function normalizeSuggestionMatchValue(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function collectSuggestionWhy(user) {
+  const why = Array.isArray(user?.why) ? user.why.filter(Boolean) : [];
+  if (user?.reason) {
+    why.push(user.reason);
+  }
+
+  return Array.from(new Set(why));
+}
+
+function mergeSuggestedUserDetails(existingUser, incomingUser) {
+  const mergedWhy = Array.from(
+    new Set([
+      ...collectSuggestionWhy(existingUser),
+      ...collectSuggestionWhy(incomingUser),
+    ]),
+  );
+
+  return {
+    ...incomingUser,
+    ...existingUser,
+    session_id: existingUser.session_id || incomingUser.session_id || null,
+    name: existingUser.name || incomingUser.name || null,
+    github_username:
+      existingUser.github_username || incomingUser.github_username || null,
+    role: existingUser.role || incomingUser.role || null,
+    department: existingUser.department || incomingUser.department || null,
+    reason: mergedWhy[0] || existingUser.reason || incomingUser.reason || null,
+    why: mergedWhy,
+  };
+}
+
+function mergeSuggestedUsers(
+  primarySuggestions = [],
+  secondarySuggestions = [],
+  { limit = 5, includeSecondaryOnly = true } = {},
+) {
+  const merged = [];
+
+  for (const suggestion of [...primarySuggestions, ...secondarySuggestions]) {
+    if (!suggestion) {
+      continue;
+    }
+
+    const suggestionSessionId = normalizeSuggestionMatchValue(
+      suggestion.session_id,
+    );
+    const suggestionGitHub = normalizeSuggestionMatchValue(
+      suggestion.github_username,
+    );
+    const suggestionName = normalizeSuggestionMatchValue(suggestion.name);
+
+    const existingIndex = merged.findIndex((candidate) => {
+      const candidateSessionId = normalizeSuggestionMatchValue(
+        candidate.session_id,
+      );
+      const candidateGitHub = normalizeSuggestionMatchValue(
+        candidate.github_username,
+      );
+      const candidateName = normalizeSuggestionMatchValue(candidate.name);
+
+      return (
+        (suggestionSessionId && candidateSessionId === suggestionSessionId) ||
+        (suggestionGitHub && candidateGitHub === suggestionGitHub) ||
+        (suggestionName && candidateName === suggestionName)
+      );
+    });
+
+    if (existingIndex === -1) {
+      if (
+        !includeSecondaryOnly &&
+        merged.length >= primarySuggestions.filter(Boolean).length
+      ) {
+        continue;
+      }
+
+      merged.push({
+        ...suggestion,
+        why: collectSuggestionWhy(suggestion),
+      });
+      continue;
+    }
+
+    merged[existingIndex] = mergeSuggestedUserDetails(
+      merged[existingIndex],
+      suggestion,
+    );
+  }
+
+  return merged.slice(0, limit);
+}
+
+function buildCombinedUserSuggestionAnswer(githubAnswer, profileSuggestionCount) {
+  if (!githubAnswer) {
+    return null;
+  }
+
+  if (profileSuggestionCount > 0) {
+    return `${githubAnswer}\n\nThese recommendations are ranked primarily from synced GitHub activity, then enriched with role and department context when we have matching team profiles.`;
+  }
+
+  return githubAnswer;
 }
 
 function isGreetingMessage(message) {
@@ -684,8 +816,8 @@ async function generateFollowUpQuestions(originalQuestion, answer, intentType) {
       
       const questions = JSON.parse(jsonMatch[0]);
       if (Array.isArray(questions) && questions.length > 0) {
-        // Limit to 5 questions max
-        return questions.slice(0, 5);
+        // Limit to 3 questions max
+        return questions.slice(0, 3);
       }
       console.warn(
         "Follow-up questions not in expected format, returning empty array",
@@ -724,6 +856,7 @@ export async function answerQuestion(
 ) {
   try {
     const requesterContext = getRequesterAccessContext(requesterSessionId);
+    const obviousIntent = inferRuleBasedIntent(message);
 
     if (isGreetingMessage(message)) {
       return buildGreetingResponse(requesterContext);
@@ -748,7 +881,7 @@ export async function answerQuestion(
       };
     }
 
-    if (threadHistory.length > 0) {
+    if (threadHistory.length > 0 && obviousIntent?.type !== "GET_USER") {
       await setStatus({
         status: "Checking conversation history…",
         loading_messages: [
@@ -829,10 +962,34 @@ export async function answerQuestion(
           3,
           requesterContext.active_github_repo,
         );
+        const shouldBlendProfileSuggestions =
+          accessibleProfiles.length > 0 &&
+          (githubRecommendations.suggestedUsers.length > 0 ||
+            !githubRecommendations.answer);
+        let suggestionResult = null;
+
+        if (shouldBlendProfileSuggestions) {
+          console.log(
+            "Accessible users:",
+            JSON.stringify(accessibleProfiles, null, 2),
+          );
+          suggestionResult = await suggestUserForTopic(
+            JSON.stringify(accessibleProfiles, null, 2),
+            message,
+          );
+        }
 
         if (githubRecommendations.suggestedUsers.length > 0) {
-          answer = githubRecommendations.answer;
-          suggestedUsers = githubRecommendations.suggestedUsers;
+          const profileSuggestions = suggestionResult?.suggestions || [];
+          answer = buildCombinedUserSuggestionAnswer(
+            githubRecommendations.answer,
+            profileSuggestions.length,
+          );
+          suggestedUsers = mergeSuggestedUsers(
+            githubRecommendations.suggestedUsers,
+            profileSuggestions,
+            { includeSecondaryOnly: false },
+          );
           githubSyncContext = githubRecommendations.syncContext || null;
         } else if (githubRecommendations.answer) {
           answer = githubRecommendations.answer;
@@ -840,16 +997,8 @@ export async function answerQuestion(
         } else if (accessibleProfiles.length === 0) {
           answer = buildAccessDeniedMessage(message);
         } else {
-          console.log(
-            "Accessible users:",
-            JSON.stringify(accessibleProfiles, null, 2),
-          );
-          const suggestionResult = await suggestUserForTopic(
-            JSON.stringify(accessibleProfiles, null, 2),
-            message,
-          );
-          answer = suggestionResult.explanation;
-          suggestedUsers = suggestionResult.suggestions || [];
+          answer = suggestionResult?.explanation;
+          suggestedUsers = suggestionResult?.suggestions || [];
         }
       } else if (accessibleProfiles.length === 0) {
         answer = buildAccessDeniedMessage(message);
