@@ -6,6 +6,7 @@
   "main": "index.js",
   "scripts": {
     "test": "node --experimental-vm-modules ./node_modules/jest-cli/bin/jest.js",
+    "test:acceptance": "node --experimental-vm-modules ./node_modules/jest-cli/bin/jest.js tests/acceptance --silent",
     "start": "node index.js",
     "bot": "node index.js",
     "graph": "node logic/graphql_setup/graphql_implementation.js"

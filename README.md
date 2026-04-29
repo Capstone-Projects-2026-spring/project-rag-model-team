@@ -159,6 +159,14 @@ Optional verification:
 npm test
 ```
 
+Run only the automated acceptance tests:
+
+```bash
+npm run test:acceptance
+```
+
+The full test suite includes unit, integration-style, and service-level acceptance tests. The acceptance tests cover internal documentation answers, web-search fallback offers, team-member recommendations, follow-up questions, and restricted-content filtering.
+
 Notes:
 
 - The main bot entry point is the root `index.js`.
